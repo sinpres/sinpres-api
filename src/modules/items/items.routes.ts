@@ -1,0 +1,85 @@
+import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
+import { z } from 'zod'
+import { ItemsResponseSchema, ItemResponseSchema, ItemsQuerySchema } from './items.schema'
+import { getItems, getItemByCode } from './items.service'
+import { getSectorBySlug } from '@/modules/sectors/sectors.service'
+import { notFound } from '@/shared/errors'
+import { paginationMeta } from '@/shared/pagination'
+export const itemsApp = new OpenAPIHono()
+
+const listRoute = createRoute({
+  method: 'get',
+  path: '/api/v1/sectors/{slug}/items',
+  tags: ['Items'],
+  summary: 'Buscar itens de um setor',
+  description: `Retorna uma lista paginada de itens (insumos) de um setor.
+
+**Busca textual:** Use o parâmetro \`search\` para buscar por descrição ou informações gerais. A busca utiliza full-text search em português (PostgreSQL \`tsvector\`).
+
+**Filtro por unidade:** Use o parâmetro \`unit\` para filtrar por unidade de medida (ex: KG, M, M2, UN).
+
+**Paginação:** Use \`page\` e \`limit\` para controlar a paginação. Máximo de 100 itens por página.`,
+  request: {
+    params: z.object({ slug: z.string().openapi({ example: 'civil-construction' }) }),
+    query: ItemsQuerySchema,
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: ItemsResponseSchema } },
+      description: 'Lista paginada de itens com metadados de paginação',
+    },
+    404: {
+      content: { 'application/json': { schema: z.object({ error: z.string() }) } },
+      description: 'Setor não encontrado',
+    },
+  },
+})
+
+const getRoute = createRoute({
+  method: 'get',
+  path: '/api/v1/sectors/{slug}/items/{code}',
+  tags: ['Items'],
+  summary: 'Detalhar item por código',
+  description: 'Retorna os detalhes completos de um item (insumo) pelo seu código de referência. Para Construção Civil, o código corresponde ao código SINAPI.',
+  request: {
+    params: z.object({
+      slug: z.string().openapi({ example: 'civil-construction' }),
+      code: z.coerce.number().openapi({ example: 34 }),
+    }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: ItemResponseSchema } },
+      description: 'Detalhes do item',
+    },
+    404: {
+      content: { 'application/json': { schema: z.object({ error: z.string() }) } },
+      description: 'Item ou setor não encontrado',
+    },
+  },
+})
+
+itemsApp.openapi(listRoute, async (c) => {
+  const { slug } = c.req.valid('param')
+  const query = c.req.valid('query')
+
+  const sector = await getSectorBySlug(slug)
+  if (!sector) return notFound(c, 'Sector not found')
+
+  const { items, total } = await getItems(sector.schemaName, query)
+  const meta = paginationMeta(total, query.page, query.limit)
+
+  return c.json({ data: items, meta }, 200)
+})
+
+itemsApp.openapi(getRoute, async (c) => {
+  const { slug, code } = c.req.valid('param')
+
+  const sector = await getSectorBySlug(slug)
+  if (!sector) return notFound(c, 'Sector not found')
+
+  const item = await getItemByCode(sector.schemaName, code)
+  if (!item) return notFound(c, 'Item not found')
+
+  return c.json({ data: item }, 200)
+})
