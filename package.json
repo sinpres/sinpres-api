@@ -9,6 +9,7 @@
     "db:generate": "bun drizzle-kit generate",
     "db:migrate": "bun drizzle-kit migrate",
     "db:seed": "bun run src/db/seed/seed.ts",
+    "vercel-build": "bun build src/vercel.ts --target=node --outfile=api/index.mjs --external postgres",
     "test": "vitest",
     "test:run": "vitest run"
   },
@@ -21,8 +22,10 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@hono/node-server": "^1.19.11",
     "@hono/zod-openapi": "^1.2.3",
     "@scalar/hono-api-reference": "^0.10.5",
+    "@vercel/blob": "^2.3.1",
     "drizzle-orm": "^0.45.1",
     "hono": "^4.12.9",
     "postgres": "^3.4.8",

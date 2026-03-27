@@ -2,9 +2,9 @@ import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
 import { z } from 'zod'
 import { ItemsResponseSchema, ItemResponseSchema, ItemsQuerySchema } from './items.schema'
 import { getItems, getItemByCode } from './items.service'
-import { getSectorBySlug } from '@/modules/sectors/sectors.service'
-import { notFound } from '@/shared/errors'
-import { paginationMeta } from '@/shared/pagination'
+import { getSectorBySlug } from '../sectors/sectors.service'
+import { notFound } from '../../shared/errors'
+import { paginationMeta } from '../../shared/pagination'
 export const itemsApp = new OpenAPIHono()
 
 const listRoute = createRoute({

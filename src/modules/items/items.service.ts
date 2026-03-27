@@ -1,7 +1,7 @@
-import { db } from '@/db/client'
-import { civilConstructionItems } from '@/db/schema'
+import { db } from '../../db/client'
+import { civilConstructionItems } from '../../db/schema'
 import { eq, sql, and, count } from 'drizzle-orm'
-import type { PaginationQuery } from '@/shared/pagination'
+import type { PaginationQuery } from '../../shared/pagination'
 
 interface ItemsFilter extends PaginationQuery {
   search?: string

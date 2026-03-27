@@ -2,8 +2,8 @@ import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
 import { z } from 'zod'
 import { CategoriesResponseSchema } from './categories.schema'
 import { getCategoriesBySector } from './categories.service'
-import { getSectorBySlug } from '@/modules/sectors/sectors.service'
-import { notFound } from '@/shared/errors'
+import { getSectorBySlug } from '../sectors/sectors.service'
+import { notFound } from '../../shared/errors'
 
 export const categoriesApp = new OpenAPIHono()
 

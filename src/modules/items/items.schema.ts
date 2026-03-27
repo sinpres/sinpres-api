@@ -1,5 +1,5 @@
 import { z } from '@hono/zod-openapi'
-import { paginationQuerySchema } from '@/shared/pagination'
+import { paginationQuerySchema } from '../../shared/pagination'
 
 export const ItemSchema = z.object({
   id: z.number(),

@@ -2,7 +2,7 @@ import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
 import { z } from 'zod'
 import { SectorsResponseSchema, SectorResponseSchema } from './sectors.schema'
 import { getAllSectors, getSectorBySlug } from './sectors.service'
-import { notFound } from '@/shared/errors'
+import { notFound } from '../../shared/errors'
 
 export const sectorsApp = new OpenAPIHono()
 

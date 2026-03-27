@@ -3,3 +3,7 @@ dist/
 .env
 .DS_Store
 public/images/
+docs/
+api/
+CLAUDE.md
+.vercel
