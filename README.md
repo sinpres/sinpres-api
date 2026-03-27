@@ -139,4 +139,4 @@ Contribuições são bem-vindas! Este é um projeto open-source e qualquer ajuda
 
 ## Licença e créditos
 
-MIT — Mantido por [TREE.IA](https://tree.ia.br)
+MIT — Mantido por [TREE.IA](https://tree.ia.br?utm_source=sinpres&utm_medium=github&utm_campaign=api)

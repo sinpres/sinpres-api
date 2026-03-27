@@ -73,11 +73,11 @@ GET /api/v1/sectors/civil-construction/items?page=2&limit=20
 ## Links
 
 - [GitHub — sinpres-api](https://github.com/sinpres/sinpres-api)
-- [TREE.IA](https://tree.ia.br)
+- [TREE.IA](https://tree.ia.br?utm_source=sinpres&utm_medium=openapi&utm_campaign=api)
 `,
     contact: {
       name: 'TREE.IA',
-      url: 'https://tree.ia.br',
+      url: 'https://tree.ia.br?utm_source=sinpres&utm_medium=openapi&utm_campaign=api',
     },
     license: {
       name: 'MIT',
