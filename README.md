@@ -2,6 +2,14 @@
 
 **Sistema Nacional de Preços Setoriais** — API pública e gratuita para consulta de insumos e preços referenciais por setor da economia brasileira.
 
+## URL base
+
+```
+https://api.sinpres.com.br
+```
+
+Não requer autenticação. Todos os endpoints são públicos.
+
 ## Por que este projeto existe?
 
 A **Caixa Econômica Federal**, em parceria com o **IBGE**, mantém o **SINAPI** (Sistema Nacional de Pesquisa de Custos e Índices da Construção Civil) — uma base de dados com milhares de insumos, composições e preços referenciais utilizados em obras públicas e privadas no Brasil. Esses dados são a referência oficial para orçamentos de obras financiadas com recursos públicos e servem como base para licitações, auditorias e planejamento de custos em todo o país.
@@ -56,20 +64,20 @@ O endpoint de busca suporta **full-text search em português** (com stemming e n
 
 **Buscar insumos de tubo PVC:**
 
-```
-GET /api/v1/sectors/civil-construction/items?search=tubo+pvc&limit=10
+```bash
+curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items?search=tubo+pvc&limit=10"
 ```
 
 **Filtrar por unidade (quilograma):**
 
-```
-GET /api/v1/sectors/civil-construction/items?unit=KG&page=2
+```bash
+curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items?unit=KG&page=2"
 ```
 
 **Consultar insumo pelo código SINAPI:**
 
-```
-GET /api/v1/sectors/civil-construction/items/34
+```bash
+curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items/34"
 ```
 
 ### Resposta
@@ -84,7 +92,7 @@ GET /api/v1/sectors/civil-construction/items/34
       "unit": "KG",
       "technicalStandards": "NBR 6118:2014; NBR 14931:2003; NBR 7480:2022",
       "generalInfo": "É utilizado em estrutura de concreto armado...",
-      "imageUrl": "images/34.jpeg",
+      "imageUrl": "https://j57uww5mhge9cyoz.public.blob.vercel-storage.com/images/34.jpeg",
       "sourceUpdatedAt": "12/12/2018",
       "createdAt": "2026-03-26T15:52:41.194Z"
     }
@@ -120,57 +128,10 @@ GET /api/v1/sectors/civil-construction/items/34
 | `SC25KG` | Saco de 25 kg |
 | `KWH` | Quilowatt-hora |
 
-## Stack
-
-| Camada | Tecnologia |
-|---|---|
-| Runtime | [Bun](https://bun.sh) |
-| Framework | [Hono](https://hono.dev) + [Zod OpenAPI](https://github.com/honojs/middleware/tree/main/packages/zod-openapi) |
-| Banco de dados | PostgreSQL 17 (schemas isolados por setor) |
-| ORM | [Drizzle](https://orm.drizzle.team) |
-| Validação | [Zod](https://zod.dev) |
-
-## Rodando localmente
-
-```bash
-# Clonar o repositório
-git clone https://github.com/sinpres/sinpres-api.git
-cd sinpres-api
-
-# Instalar dependências
-bun install
-
-# Subir o banco de dados
-docker compose up -d
-
-# Gerar e aplicar migrações
-bun run db:generate
-bun run db:migrate
-
-# Popular o banco (requer output do sinapi-extractor)
-bun run db:seed caminho/para/items.json
-
-# Iniciar em modo desenvolvimento
-bun run dev
-```
-
-O servidor inicia em `http://localhost:3000`.
-
-### Variáveis de ambiente
-
-Crie um arquivo `.env` na raiz do projeto:
-
-```env
-DATABASE_URL=postgresql://sinpres:sinpres@localhost:5432/sinpres
-PORT=3000
-NODE_ENV=development
-```
-
 ## Documentação interativa
 
-A interface de exploração dos dados está disponível no [sinpres-web](https://github.com/sinpres/sinpres-web).
-
-A especificação OpenAPI completa pode ser acessada em `/doc`.
+- **Especificação OpenAPI:** [api.sinpres.com.br/doc](https://api.sinpres.com.br/doc)
+- **Interface web:** [sinpres.com.br](https://sinpres.com.br)
 
 ## Contribuindo
 
