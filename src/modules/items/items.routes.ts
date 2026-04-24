@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
 import { z } from 'zod'
-import { ItemsResponseSchema, ItemResponseSchema, ItemsQuerySchema } from './items.schema'
+import { ItemsResponseSchema, ItemResponseSchema, ItemsQuerySchema, ItemDetailQuerySchema } from './items.schema'
 import { getItems, getItemByCode } from './items.service'
 import { getSectorBySlug } from '../sectors/sectors.service'
 import { notFound } from '../../shared/errors'
@@ -17,6 +17,12 @@ const listRoute = createRoute({
 **Busca textual:** Use o parâmetro \`search\` para buscar por descrição ou informações gerais. A busca utiliza full-text search em português (PostgreSQL \`tsvector\`).
 
 **Filtro por unidade:** Use o parâmetro \`unit\` para filtrar por unidade de medida (ex: KG, M, M2, UN).
+
+**Filtro por UF:** Use o parâmetro \`state\` para filtrar por estado (ex: SP, RJ, MG).
+
+**Filtro por mês:** Use o parâmetro \`month\` no formato AAAA-MM. Se não informado, retorna o último mês disponível.
+
+**Regime tributário:** Use o parâmetro \`is_desonerated\` para filtrar por desoneração. Default: \`false\`.
 
 **Paginação:** Use \`page\` e \`limit\` para controlar a paginação. Máximo de 100 itens por página.`,
   request: {
@@ -40,12 +46,13 @@ const getRoute = createRoute({
   path: '/api/v1/sectors/{slug}/items/{code}',
   tags: ['Items'],
   summary: 'Detalhar item por código',
-  description: 'Retorna os detalhes completos de um item (insumo) pelo seu código de referência. Para Construção Civil, o código corresponde ao código SINAPI.',
+  description: 'Retorna os detalhes completos de um item (insumo) pelo seu código de referência. Para Construção Civil, o código corresponde ao código SINAPI. Aceita filtros opcionais de UF, mês e regime tributário.',
   request: {
     params: z.object({
       slug: z.string().openapi({ example: 'civil-construction' }),
       code: z.coerce.number().openapi({ example: 34 }),
     }),
+    query: ItemDetailQuerySchema,
   },
   responses: {
     200: {
@@ -74,11 +81,12 @@ itemsApp.openapi(listRoute, async (c) => {
 
 itemsApp.openapi(getRoute, async (c) => {
   const { slug, code } = c.req.valid('param')
+  const query = c.req.valid('query')
 
   const sector = await getSectorBySlug(slug)
   if (!sector) return notFound(c, 'Sector not found')
 
-  const item = await getItemByCode(sector.schemaName, code)
+  const item = await getItemByCode(sector.schemaName, code, query)
   if (!item) return notFound(c, 'Item not found')
 
   return c.json({ data: item }, 200)

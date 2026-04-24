@@ -1,9 +1,9 @@
 import { db } from '../../db/client'
-import { civilConstructionItems } from '../../db/schema'
+import { civilConstructionCompositions, civilConstructionCompositionItems } from '../../db/schema'
 import { eq, sql, and, count, desc, asc } from 'drizzle-orm'
 import type { PaginationQuery } from '../../shared/pagination'
 
-interface ItemsFilter extends PaginationQuery {
+interface CompositionsFilter extends PaginationQuery {
   search?: string
   unit?: string
   state?: string
@@ -12,7 +12,7 @@ interface ItemsFilter extends PaginationQuery {
 }
 
 export async function getLatestReferenceMonth(state?: string): Promise<string | null> {
-  const table = civilConstructionItems
+  const table = civilConstructionCompositions
   const conditions = []
   if (state) {
     conditions.push(eq(table.stateCode, state.toUpperCase()))
@@ -29,12 +29,12 @@ export async function getLatestReferenceMonth(state?: string): Promise<string | 
   return result[0]?.referenceMonth ?? null
 }
 
-export async function getItems(schemaName: string, filter: ItemsFilter) {
+export async function getCompositions(schemaName: string, filter: CompositionsFilter) {
   if (schemaName !== 'civil_construction') {
-    return { items: [], total: 0 }
+    return { compositions: [], total: 0 }
   }
 
-  const table = civilConstructionItems
+  const table = civilConstructionCompositions
   const conditions = []
 
   if (filter.unit) {
@@ -43,7 +43,7 @@ export async function getItems(schemaName: string, filter: ItemsFilter) {
 
   if (filter.search) {
     conditions.push(
-      sql`to_tsvector('portuguese', ${table.description} || ' ' || coalesce(${table.generalInfo}, '')) @@ plainto_tsquery('portuguese', ${filter.search})`
+      sql`to_tsvector('portuguese', ${table.description}) @@ plainto_tsquery('portuguese', ${filter.search})`
     )
   }
 
@@ -61,7 +61,7 @@ export async function getItems(schemaName: string, filter: ItemsFilter) {
   const where = conditions.length > 0 ? and(...conditions) : undefined
   const offset = (filter.page - 1) * filter.limit
 
-  const [items, totalResult] = await Promise.all([
+  const [compositions, totalResult] = await Promise.all([
     db.select()
       .from(table)
       .where(where)
@@ -73,15 +73,15 @@ export async function getItems(schemaName: string, filter: ItemsFilter) {
       .where(where),
   ])
 
-  return { items, total: totalResult[0].total }
+  return { compositions, total: totalResult[0].total }
 }
 
-export async function getItemByCode(schemaName: string, code: number, filter: { state?: string; month?: string; is_desonerated?: 'true' | 'false' }) {
+export async function getCompositionByCode(schemaName: string, code: number, filter: { state?: string; month?: string; is_desonerated?: 'true' | 'false' }) {
   if (schemaName !== 'civil_construction') {
     return null
   }
 
-  const table = civilConstructionItems
+  const table = civilConstructionCompositions
   const conditions = [eq(table.code, code)]
 
   if (filter.state) {
@@ -103,5 +103,25 @@ export async function getItemByCode(schemaName: string, code: number, filter: { 
     .orderBy(desc(table.referenceMonth), asc(table.stateCode))
     .limit(1)
 
-  return result[0] ?? null
+  const composition = result[0]
+  if (!composition) return null
+
+  const items = await db.select()
+    .from(civilConstructionCompositionItems)
+    .where(eq(civilConstructionCompositionItems.compositionId, composition.id))
+    .orderBy(asc(civilConstructionCompositionItems.code))
+
+  return {
+    ...composition,
+    items: items.map((item) => ({
+      itemType: item.itemType as 'INPUT' | 'SUB_COMPOSITION',
+      code: item.code,
+      description: item.description,
+      unit: item.unit,
+      resourceType: item.resourceType as 'MATERIAL' | 'LABOR' | 'EQUIPMENT' | null,
+      coefficient: item.coefficient,
+      unitPrice: item.unitPrice,
+      totalPrice: item.totalPrice,
+    })),
+  }
 }

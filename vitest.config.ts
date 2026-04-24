@@ -26,6 +26,8 @@ export default defineConfig({
   test: {
     globals: true,
     env: loadEnvFile('.env'),
+    setupFiles: ['./tests/setup.ts'],
+    exclude: ['**/node_modules/**', '**/.git/**', '**/._*'],
   },
   resolve: {
     alias: {

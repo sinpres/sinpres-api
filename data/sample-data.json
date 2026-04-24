@@ -1,0 +1,125 @@
+{
+  "items": [
+    {
+      "code": 1,
+      "description": "ACETILENO",
+      "unit": "M3",
+      "state_code": "SP",
+      "reference_month": "2026-04",
+      "is_desonerated": false,
+      "unit_price": 1234,
+      "technical_standards": null,
+      "general_info": null,
+      "image": null,
+      "source_updated_at": null
+    },
+    {
+      "code": 2,
+      "description": "TUBO PVC 50MM",
+      "unit": "M",
+      "state_code": "SP",
+      "reference_month": "2026-04",
+      "is_desonerated": false,
+      "unit_price": 5678,
+      "technical_standards": null,
+      "general_info": null,
+      "image": null,
+      "source_updated_at": null
+    },
+    {
+      "code": 3,
+      "description": "CIMENTO PORTLAND",
+      "unit": "KG",
+      "state_code": "SP",
+      "reference_month": "2026-04",
+      "is_desonerated": false,
+      "unit_price": 900,
+      "technical_standards": null,
+      "general_info": null,
+      "image": null,
+      "source_updated_at": null
+    },
+    {
+      "code": 4,
+      "description": "AREIA MEDIA",
+      "unit": "M3",
+      "state_code": "RJ",
+      "reference_month": "2026-04",
+      "is_desonerated": false,
+      "unit_price": 4500,
+      "technical_standards": null,
+      "general_info": null,
+      "image": null,
+      "source_updated_at": null
+    },
+    {
+      "code": 5,
+      "description": "PEDREIRO",
+      "unit": "H",
+      "state_code": "SP",
+      "reference_month": "2026-04",
+      "is_desonerated": false,
+      "unit_price": 2500,
+      "technical_standards": null,
+      "general_info": null,
+      "image": null,
+      "source_updated_at": null
+    }
+  ],
+  "compositions": [
+    {
+      "code": 1001,
+      "description": "ALVENARIA DE VEDAÇÃO EM BLOCO CERÂMICO 9X19X19",
+      "unit": "M2",
+      "state_code": "SP",
+      "reference_month": "2026-04",
+      "is_desonerated": false,
+      "base_unit_cost": 15000,
+      "source_updated_at": null,
+      "items": [
+        {
+          "item_type": "INPUT",
+          "code": 3,
+          "description": "CIMENTO PORTLAND",
+          "unit": "KG",
+          "resource_type": "MATERIAL",
+          "coefficient": "0.250000",
+          "unit_price": 900,
+          "total_price": 225
+        },
+        {
+          "item_type": "INPUT",
+          "code": 5,
+          "description": "PEDREIRO",
+          "unit": "H",
+          "resource_type": "LABOR",
+          "coefficient": "1.500000",
+          "unit_price": 2500,
+          "total_price": 3750
+        }
+      ]
+    },
+    {
+      "code": 1002,
+      "description": "REVESTIMENTO CERÂMICO",
+      "unit": "M2",
+      "state_code": "SP",
+      "reference_month": "2026-04",
+      "is_desonerated": false,
+      "base_unit_cost": 8500,
+      "source_updated_at": null,
+      "items": [
+        {
+          "item_type": "INPUT",
+          "code": 2,
+          "description": "TUBO PVC 50MM",
+          "unit": "M",
+          "resource_type": "MATERIAL",
+          "coefficient": "2.000000",
+          "unit_price": 5678,
+          "total_price": 11356
+        }
+      ]
+    }
+  ]
+}
