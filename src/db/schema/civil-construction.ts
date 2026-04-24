@@ -77,6 +77,7 @@ export const compositionItems = civilConstructionSchema.table('composition_items
   totalPrice: integer('total_price').notNull().default(0),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 }, (table) => [
+  uniqueIndex('composition_items_unique_idx').on(table.compositionId, table.itemType, table.code),
   index('composition_items_composition_id_idx').on(table.compositionId),
   index('composition_items_code_idx').on(table.code),
   index('composition_items_item_type_idx').on(table.itemType),

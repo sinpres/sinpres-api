@@ -106,10 +106,42 @@ export async function getCompositionByCode(schemaName: string, code: number, fil
   const composition = result[0]
   if (!composition) return null
 
-  const items = await db.select()
+  // Composition items are shared across all state instances of the same composition code,
+  // so we look them up via any composition with the same code/month/desonerated flag.
+  const items = await db.select({
+    itemType: civilConstructionCompositionItems.itemType,
+    code: civilConstructionCompositionItems.code,
+    description: civilConstructionCompositionItems.description,
+    unit: civilConstructionCompositionItems.unit,
+    resourceType: civilConstructionCompositionItems.resourceType,
+    coefficient: civilConstructionCompositionItems.coefficient,
+    unitPrice: civilConstructionCompositionItems.unitPrice,
+    totalPrice: civilConstructionCompositionItems.totalPrice,
+  })
     .from(civilConstructionCompositionItems)
-    .where(eq(civilConstructionCompositionItems.compositionId, composition.id))
+    .innerJoin(
+      civilConstructionCompositions,
+      eq(civilConstructionCompositionItems.compositionId, civilConstructionCompositions.id)
+    )
+    .where(and(
+      eq(civilConstructionCompositions.code, code),
+      eq(civilConstructionCompositions.referenceMonth, composition.referenceMonth)
+      // Note: composition items are identical across desonerated/non-desonerated instances,
+      // so we don't filter by isDesonerated here. The import may attach items to either variant.
+    ))
+    .groupBy(
+      civilConstructionCompositionItems.id,
+      civilConstructionCompositionItems.itemType,
+      civilConstructionCompositionItems.code,
+      civilConstructionCompositionItems.description,
+      civilConstructionCompositionItems.unit,
+      civilConstructionCompositionItems.resourceType,
+      civilConstructionCompositionItems.coefficient,
+      civilConstructionCompositionItems.unitPrice,
+      civilConstructionCompositionItems.totalPrice
+    )
     .orderBy(asc(civilConstructionCompositionItems.code))
+    .limit(1000)
 
   return {
     ...composition,

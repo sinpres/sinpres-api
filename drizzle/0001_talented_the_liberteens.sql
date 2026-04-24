@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "composition_items_unique_idx" ON "civil_construction"."composition_items" USING btree ("composition_id","item_type","code");
