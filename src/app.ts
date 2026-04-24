@@ -3,6 +3,8 @@ import { healthApp } from './modules/health/health.routes'
 import { sectorsApp } from './modules/sectors/sectors.routes'
 import { categoriesApp } from './modules/categories/categories.routes'
 import { itemsApp } from './modules/items/items.routes'
+import { compositionsApp } from './modules/compositions/compositions.routes'
+import { sinapiApp } from './modules/sinapi/sinapi.routes'
 import { cors } from 'hono/cors'
 
 export const app = new OpenAPIHono()
@@ -15,16 +17,18 @@ app.route('/', healthApp)
 app.route('/', sectorsApp)
 app.route('/', categoriesApp)
 app.route('/', itemsApp)
+app.route('/', compositionsApp)
+app.route('/', sinapiApp)
 
 // OpenAPI spec
 app.doc('/doc', {
   openapi: '3.1.0',
   info: {
     title: 'SINPRES API',
-    version: '1.0.0',
+    version: '1.1.0',
     description: `# SINPRES — Sistema Nacional de Preços Setoriais
 
-API pública e open-source para consulta de preços e insumos por setor da economia brasileira.
+API pública e open-source para consulta de preços, insumos e composições por setor da economia brasileira.
 
 ## Sobre o projeto
 
@@ -34,7 +38,7 @@ O SINPRES organiza dados públicos de referência de preços de diferentes setor
 
 | Setor | Slug | Fonte | Itens | Status |
 |---|---|---|---|---|
-| **Construção Civil** | \`civil-construction\` | [SINAPI](https://www.caixa.gov.br/poder-publico/modernizacao-gestao/sinapi/) — Caixa Econômica Federal / IBGE | 6.009 insumos | Disponível |
+| **Construção Civil** | \`civil-construction\` | [SINAPI](https://www.caixa.gov.br/poder-publico/modernizacao-gestao/sinapi/) — Caixa Econômica Federal / IBGE | Insumos + Composições por UF e mês | Disponível |
 | **Saúde** | \`health\` | — | — | Em breve |
 | **Alimentação** | \`food\` | — | — | Em breve |
 | **Energia** | \`energy\` | — | — | Em breve |
@@ -51,19 +55,29 @@ GET /api/v1/sectors
 GET /api/v1/sectors/civil-construction/items?search=tubo pvc
 \`\`\`
 
-### 3. Filtrar por unidade de medida
+### 3. Buscar composições por texto
 \`\`\`
-GET /api/v1/sectors/civil-construction/items?unit=KG
-\`\`\`
-
-### 4. Buscar insumo por código
-\`\`\`
-GET /api/v1/sectors/civil-construction/items/34
+GET /api/v1/sectors/civil-construction/compositions?search=alvenaria
 \`\`\`
 
-### 5. Paginação
+### 4. Detalhar composição com itens
 \`\`\`
-GET /api/v1/sectors/civil-construction/items?page=2&limit=20
+GET /api/v1/sectors/civil-construction/compositions/7327
+\`\`\`
+
+### 5. Filtrar por UF e mês de referência
+\`\`\`
+GET /api/v1/sectors/civil-construction/items?state=SP&month=2026-04
+\`\`\`
+
+### 6. Listar UFs disponíveis
+\`\`\`
+GET /api/v1/sinapi/states
+\`\`\`
+
+### 7. Listar meses de referência disponíveis
+\`\`\`
+GET /api/v1/sinapi/reference-months?state=SP
 \`\`\`
 
 ## Unidades de medida disponíveis (Construção Civil)
@@ -84,6 +98,12 @@ GET /api/v1/sectors/civil-construction/items?page=2&limit=20
       url: 'https://opensource.org/licenses/MIT',
     },
   },
+  servers: [
+    {
+      url: 'https://api.sinpres.com.br',
+      description: 'Production server',
+    },
+  ],
   tags: [
     {
       name: 'Health',
@@ -99,8 +119,15 @@ GET /api/v1/sectors/civil-construction/items?page=2&limit=20
     },
     {
       name: 'Items',
-      description: 'Itens (insumos) de um setor. Suporta busca textual em português (full-text search), filtro por unidade de medida e paginação. Cada item possui código, descrição, unidade, normas técnicas, informações gerais e imagem de referência.',
+      description: 'Itens (insumos) de um setor. Suporta busca textual em português (full-text search), filtro por unidade de medida, UF, mês de referência, regime tributário e paginação. Cada item possui código, descrição, unidade, preço unitário, normas técnicas, informações gerais e imagem de referência.',
+    },
+    {
+      name: 'Compositions',
+      description: 'Composições (serviços completos) de um setor. No SINAPI, uma composição representa um serviço de construção civil com seus insumos e sub-composições, coeficientes e preços resultantes. Suporta busca textual, filtros por unidade, UF, mês e regime tributário.',
+    },
+    {
+      name: 'SINAPI',
+      description: 'Metadados e informações auxiliares sobre os dados SINAPI, como UFs disponíveis e meses de referência.',
     },
   ],
 })
-

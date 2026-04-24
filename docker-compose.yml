@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: sinpres
       POSTGRES_DB: sinpres
     ports:
-      - "5432:5432"
+      - "5438:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 
