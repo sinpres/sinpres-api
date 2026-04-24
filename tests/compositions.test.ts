@@ -48,10 +48,11 @@ describe('Compositions', () => {
 
   describe('GET /api/v1/sectors/:slug/compositions/:code', () => {
     it('returns composition by code with items', async () => {
-      const res = await app.request('/api/v1/sectors/civil-construction/compositions/1001')
+      // Code 93959 exists in SINAPI 2026-03 data with 24 associated items
+      const res = await app.request('/api/v1/sectors/civil-construction/compositions/93959')
       expect(res.status).toBe(200)
       const body = await res.json()
-      expect(body.data.code).toBe(1001)
+      expect(body.data.code).toBe(93959)
       expect(body.data).toHaveProperty('items')
       expect(Array.isArray(body.data.items)).toBe(true)
       expect(body.data.items.length).toBeGreaterThan(0)
