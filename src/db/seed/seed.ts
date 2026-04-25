@@ -23,9 +23,13 @@ import { runReferenceImport } from '../import/sinapi'
 import { runExtractorEnrich } from '../import/enrich-from-extractor'
 import { runMaintenancesImport } from '../import/maintenances'
 
-const DEFAULT_REFERENCE_DIR = '/Volumes/programacao/sinapi-extractor/output/reference'
-const DEFAULT_EXTRACTOR_JSON = '/Volumes/programacao/sinapi-extractor/output/items.json'
-const DEFAULT_MAINTENANCES = '/Volumes/programacao/sinapi-extractor/output/maintenances.json'
+// The seed reads from sinpres-api/input/ by default. That folder mirrors the layout
+// of sinapi-extractor/output/ and is populated by `bun run import:month` (which copies
+// the extractor's outputs here) or manually. See input/README.md for details.
+const PROJECT_ROOT = resolve(__dirname, '../../..')
+const DEFAULT_REFERENCE_DIR = resolve(PROJECT_ROOT, 'input/reference')
+const DEFAULT_EXTRACTOR_JSON = resolve(PROJECT_ROOT, 'input/items.json')
+const DEFAULT_MAINTENANCES = resolve(PROJECT_ROOT, 'input/maintenances.json')
 
 interface SeedConfig {
   referenceDir: string
