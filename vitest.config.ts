@@ -28,6 +28,9 @@ export default defineConfig({
     env: loadEnvFile('.env'),
     setupFiles: ['./tests/setup.ts'],
     exclude: ['**/node_modules/**', '**/.git/**', '**/._*'],
+    // Test files share the same local Postgres instance — running in parallel causes
+    // race conditions on TRUNCATE and seed. Sequential execution keeps tests reliable.
+    fileParallelism: false,
   },
   resolve: {
     alias: {

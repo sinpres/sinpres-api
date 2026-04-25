@@ -30,7 +30,7 @@ describe('Compositions', () => {
     })
 
     it('supports unit filter', async () => {
-      const res = await app.request('/api/v1/sectors/civil-construction/compositions?unit=M2')
+      const res = await app.request('/api/v1/sectors/civil-construction/compositions?unit=M2&state=SP&month=2026-04')
       expect(res.status).toBe(200)
       const body = await res.json()
       expect(body.data.length).toBeGreaterThan(0)
@@ -47,17 +47,25 @@ describe('Compositions', () => {
   })
 
   describe('GET /api/v1/sectors/:slug/compositions/:code', () => {
-    it('returns composition by code with items', async () => {
-      // Code 93959 exists in SINAPI 2026-03 data with 24 associated items
-      const res = await app.request('/api/v1/sectors/civil-construction/compositions/93959')
+    it('returns composition by code with items and computed totalPrice', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/compositions/1001?state=SP&month=2026-04')
       expect(res.status).toBe(200)
       const body = await res.json()
-      expect(body.data.code).toBe(93959)
+      expect(body.data.code).toBe(1001)
       expect(body.data).toHaveProperty('items')
       expect(Array.isArray(body.data.items)).toBe(true)
-      expect(body.data.items.length).toBeGreaterThan(0)
-      expect(body.data.items[0]).toHaveProperty('itemType')
-      expect(body.data.items[0]).toHaveProperty('coefficient')
+      expect(body.data.items.length).toBe(2)
+      // CIMENTO (code 3): coefficient 0.25 × unitPrice 900 = totalPrice 225
+      const cimento = body.data.items.find((i: any) => i.code === 3)
+      expect(cimento).toBeDefined()
+      expect(cimento.itemType).toBe('INPUT')
+      expect(cimento.unitPrice).toBe(900)
+      expect(cimento.totalPrice).toBe(225)
+      // PEDREIRO (code 5): coefficient 1.5 × unitPrice 2500 = totalPrice 3750
+      const pedreiro = body.data.items.find((i: any) => i.code === 5)
+      expect(pedreiro).toBeDefined()
+      expect(pedreiro.unitPrice).toBe(2500)
+      expect(pedreiro.totalPrice).toBe(3750)
     })
 
     it('returns 404 for unknown code', async () => {

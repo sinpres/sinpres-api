@@ -48,7 +48,7 @@ describe('Items', () => {
 
   describe('GET /api/v1/sectors/:slug/items/:code', () => {
     it('returns item by code', async () => {
-      const res = await app.request('/api/v1/sectors/civil-construction/items/1')
+      const res = await app.request('/api/v1/sectors/civil-construction/items/1?state=SP&month=2026-04')
       expect(res.status).toBe(200)
       const body = await res.json()
       expect(body.data.code).toBe(1)
@@ -57,6 +57,24 @@ describe('Items', () => {
     it('returns 404 for unknown code', async () => {
       const res = await app.request('/api/v1/sectors/civil-construction/items/999999')
       expect(res.status).toBe(404)
+    })
+  })
+
+  describe('previousCode field', () => {
+    it('returns previousCode null for items without substitution', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/items/1?state=SP&month=2026-04')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.data).toHaveProperty('previousCode')
+      expect(body.data.previousCode).toBeNull()
+    })
+
+    it('returns previousCode with the replaced code when populated', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/items/100?state=SP&month=2026-04')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.data.code).toBe(100)
+      expect(body.data.previousCode).toBe(99)
     })
   })
 })
