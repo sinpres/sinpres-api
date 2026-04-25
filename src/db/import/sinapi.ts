@@ -27,12 +27,9 @@ import { itemCatalog, itemPrices, compositionCatalog, compositionPrices, composi
 import { sql } from 'drizzle-orm'
 import { resolve } from 'path'
 
-const SINAPI_REFERENCE_MONTH = process.argv[2]
-const FILE_PATH = process.argv[3]
-
-if (!SINAPI_REFERENCE_MONTH || !FILE_PATH) {
-  console.error('Usage: bun run src/db/import/sinapi.ts <YYYY-MM> <path-to-xlsx>')
-  process.exit(1)
+export interface RunSinapiImportArgs {
+  referenceMonth: string
+  filePath: string
 }
 
 function normalizeHeader(val: unknown): string {
@@ -699,9 +696,8 @@ async function upsertCompositionItemsV2(parsedItems: ParsedCompositionItem[]): P
   return rows.length
 }
 
-async function main() {
-  const filePath = resolve(FILE_PATH)
-  const referenceMonth = SINAPI_REFERENCE_MONTH
+export async function runSinapiImport({ referenceMonth, filePath: rawPath }: RunSinapiImportArgs) {
+  const filePath = resolve(rawPath)
 
   console.log(`Reading SINAPI file: ${filePath}`)
   console.log(`Reference month: ${referenceMonth}`)
@@ -822,10 +818,21 @@ async function main() {
   console.log(`  Compositions — updated (divergent): ${compCatalogStats.divergent}`)
   console.log(`  Compositions — prices inserted:     ${compPricesStats.inserted}`)
   console.log(`  Composition items inserted:         ${compItemsInserted}`)
-  process.exit(0)
 }
 
-main().catch((err) => {
-  console.error('Import failed:', err)
-  process.exit(1)
-})
+if (import.meta.main) {
+  const SINAPI_REFERENCE_MONTH = process.argv[2]
+  const FILE_PATH = process.argv[3]
+
+  if (!SINAPI_REFERENCE_MONTH || !FILE_PATH) {
+    console.error('Usage: bun run src/db/import/sinapi.ts <YYYY-MM> <path-to-xlsx>')
+    process.exit(1)
+  }
+
+  runSinapiImport({ referenceMonth: SINAPI_REFERENCE_MONTH, filePath: FILE_PATH })
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error('Import failed:', err)
+      process.exit(1)
+    })
+}

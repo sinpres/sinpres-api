@@ -14,8 +14,6 @@ import { eq } from 'drizzle-orm'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 
-const EXTRACTOR_JSON_PATH = process.argv[2] || resolve(__dirname, '../../../../sinapi-extractor/output/items.json')
-
 interface ExtractorItem {
   code: number
   description: string
@@ -26,10 +24,10 @@ interface ExtractorItem {
   image: string
 }
 
-async function main() {
-  console.log(`Reading extractor data from: ${EXTRACTOR_JSON_PATH}`)
+export async function runExtractorEnrich(jsonPath: string) {
+  console.log(`Reading extractor data from: ${jsonPath}`)
 
-  const raw = readFileSync(EXTRACTOR_JSON_PATH, 'utf-8')
+  const raw = readFileSync(jsonPath, 'utf-8')
   const extractorItems: ExtractorItem[] = JSON.parse(raw)
   console.log(`  -> ${extractorItems.length} items in extractor output`)
 
@@ -63,10 +61,16 @@ async function main() {
   console.log(`\nDone!`)
   console.log(`  Rows updated: ${updated}`)
   console.log(`  Codes not found in catalog: ${notFound}`)
-  process.exit(0)
 }
 
-main().catch((err) => {
-  console.error('Enrichment failed:', err)
-  process.exit(1)
-})
+if (import.meta.main) {
+  const EXTRACTOR_JSON_PATH =
+    process.argv[2] || resolve(__dirname, '../../../../sinapi-extractor/output/items.json')
+
+  runExtractorEnrich(EXTRACTOR_JSON_PATH)
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error('Enrichment failed:', err)
+      process.exit(1)
+    })
+}
