@@ -2,7 +2,6 @@ import { db } from '../../db/client'
 import {
   civilConstructionCompositionCatalog,
   civilConstructionCompositionPrices,
-  civilConstructionCompositionItemsV2,
 } from '../../db/schema'
 import { eq, sql, and, count, desc, asc } from 'drizzle-orm'
 import type { PaginationQuery } from '../../shared/pagination'
@@ -170,7 +169,7 @@ export async function getCompositionByCode(schemaName: string, code: number, fil
         END,
         0
       )::int AS unit_price
-    FROM civil_construction.composition_items_v2 ci
+    FROM civil_construction.composition_items ci
     LEFT JOIN civil_construction.item_catalog ic
       ON ic.code = ci.item_code AND ci.item_type = 'INPUT'
     LEFT JOIN civil_construction.item_prices ip

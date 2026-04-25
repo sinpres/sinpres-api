@@ -6,9 +6,7 @@
  *   - civil_construction.item_prices          (upsert by (catalog_id, state, month, regime))
  *   - civil_construction.composition_catalog  (upsert by code, SCD Type 1)
  *   - civil_construction.composition_prices   (upsert by (catalog_id, state, month, regime))
- *   - civil_construction.composition_items_v2 (upsert by (composition_id, item_type, item_code))
- *
- * Legacy tables (items, compositions, composition_items) are intentionally NOT written to.
+ *   - civil_construction.composition_items    (upsert by (composition_id, item_type, item_code))
  *
  * Fields NOT populated by this importer:
  *   - previous_code          -> populated by maintenances.ts
@@ -23,7 +21,7 @@
  */
 import * as XLSX from 'xlsx'
 import { db } from '../client'
-import { itemCatalog, itemPrices, compositionCatalog, compositionPrices, compositionItemsV2 } from '../schema/civil-construction'
+import { itemCatalog, itemPrices, compositionCatalog, compositionPrices, compositionItems } from '../schema/civil-construction'
 import { sql } from 'drizzle-orm'
 import { resolve } from 'path'
 
@@ -646,7 +644,7 @@ async function insertCompositionPrices(parsedComps: ParsedComposition[]): Promis
   return { inserted: rows.length }
 }
 
-async function upsertCompositionItemsV2(parsedItems: ParsedCompositionItem[]): Promise<number> {
+async function upsertCompositionItems(parsedItems: ParsedCompositionItem[]): Promise<number> {
   if (parsedItems.length === 0) return 0
 
   const compCodes = [...new Set(parsedItems.map((p) => p.compositionCode))]
@@ -687,10 +685,10 @@ async function upsertCompositionItemsV2(parsedItems: ParsedCompositionItem[]): P
     })
   }
 
-  console.log(`  Deduped to ${rows.length} unique composition_items_v2 rows`)
+  console.log(`  Deduped to ${rows.length} unique composition_items rows`)
 
-  await runInBatches(rows, 500, 'composition_items_v2 upsert', async (batch) => {
-    await db.insert(compositionItemsV2).values(batch as any).onConflictDoNothing()
+  await runInBatches(rows, 500, 'composition_items upsert', async (batch) => {
+    await db.insert(compositionItems).values(batch as any).onConflictDoNothing()
   })
 
   return rows.length
@@ -803,8 +801,8 @@ export async function runSinapiImport({ referenceMonth, filePath: rawPath }: Run
   }
 
   if (allCompositionItems.length > 0) {
-    console.log('\n[5/5] composition_items_v2 upsert...')
-    compItemsInserted = await upsertCompositionItemsV2(allCompositionItems)
+    console.log('\n[5/5] composition_items upsert...')
+    compItemsInserted = await upsertCompositionItems(allCompositionItems)
   }
 
   console.log('')

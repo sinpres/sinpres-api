@@ -2,7 +2,7 @@ import { db } from '../src/db/client'
 import { sectors } from '../src/db/schema/public'
 import {
   itemCatalog, itemPrices, compositionCatalog, compositionPrices,
-  compositionItemsV2,
+  compositionItems,
 } from '../src/db/schema/civil-construction'
 import { sql } from 'drizzle-orm'
 
@@ -13,14 +13,11 @@ import { sql } from 'drizzle-orm'
 async function seed() {
   await db.execute(sql`
     TRUNCATE TABLE
-      civil_construction.composition_items_v2,
+      civil_construction.composition_items,
       civil_construction.composition_prices,
       civil_construction.composition_catalog,
       civil_construction.item_prices,
       civil_construction.item_catalog,
-      civil_construction.composition_items,
-      civil_construction.compositions,
-      civil_construction.items,
       public.sectors
     RESTART IDENTITY CASCADE
   `)
@@ -64,7 +61,7 @@ async function seed() {
     { catalogId: compIdByCode.get(1002)!, stateCode: 'SP', referenceMonth: '2026-04', isDesonerated: false, baseUnitCost: 8500 },
   ])
 
-  await db.insert(compositionItemsV2).values([
+  await db.insert(compositionItems).values([
     { compositionId: compIdByCode.get(1001)!, itemType: 'INPUT', itemCode: 3, description: 'CIMENTO PORTLAND', unit: 'KG', resourceType: 'MATERIAL', coefficient: '0.250000' },
     { compositionId: compIdByCode.get(1001)!, itemType: 'INPUT', itemCode: 5, description: 'PEDREIRO', unit: 'H', resourceType: 'LABOR', coefficient: '1.500000' },
   ])
