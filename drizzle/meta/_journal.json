@@ -15,6 +15,13 @@
       "when": 1777061765162,
       "tag": "0001_talented_the_liberteens",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777083084143,
+      "tag": "0002_military_guardsmen",
+      "breakpoints": true
     }
   ]
 }
