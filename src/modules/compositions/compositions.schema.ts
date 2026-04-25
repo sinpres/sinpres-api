@@ -22,7 +22,11 @@ export const CompositionSchema = z.object({
   isDesonerated: z.boolean(),
   baseUnitCost: z.number(),
   sourceUpdatedAt: z.string().nullable(),
-  previousCode: z.number().nullable(),
+  previousCode: z.number().nullable().openapi({
+    example: null,
+    description:
+      'Código anterior desta composição quando houve substituição publicada pela Caixa. Null se o código é original. Use para migrar registros locais quando o SINAPI substitui um código por outro.',
+  }),
   createdAt: z.string(),
 })
 

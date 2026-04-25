@@ -14,7 +14,7 @@ Não requer autenticação. Todos os endpoints são públicos.
 
 A **Caixa Econômica Federal**, em parceria com o **IBGE**, mantém o **SINAPI** (Sistema Nacional de Pesquisa de Custos e Índices da Construção Civil) — uma base de dados com milhares de insumos, composições e preços referenciais utilizados em obras públicas e privadas no Brasil. Esses dados são a referência oficial para orçamentos de obras financiadas com recursos públicos e servem como base para licitações, auditorias e planejamento de custos em todo o país.
 
-O problema: **esses dados estão presos em PDFs e planilhas**. A Caixa disponibiliza os catálogos de insumos e composições em documentos estáticos, o que dificulta a busca, filtragem, integração com sistemas e qualquer tipo de automação. Para um engenheiro, orçamentista ou desenvolvedor que precisa consultar um insumo específico ou montar um orçamento analítico, isso significa navegar manualmente por centenas de páginas de tabelas.
+O problema: **esses dados estão presos em PDFs e planilhas**. A Caixa disponibiliza os catálogos em documentos estáticos, o que dificulta a busca, filtragem, integração com sistemas e qualquer tipo de automação. Para um engenheiro, orçamentista ou desenvolvedor que precisa consultar um insumo específico ou montar um orçamento analítico, isso significa navegar manualmente por centenas de páginas de tabelas.
 
 O **SINPRES** resolve isso. Extraímos os dados dos arquivos oficiais, estruturamos em um banco de dados relacional e disponibilizamos por meio de uma API REST moderna, gratuita e de código aberto — para que qualquer pessoa ou sistema possa consultar, filtrar e integrar esses dados de forma programática.
 
@@ -34,6 +34,34 @@ O **SINPRES** resolve isso. Extraímos os dados dos arquivos oficiais, estrutura
 | Saúde | — | Em breve |
 | Alimentação | — | Em breve |
 | Energia | — | Em breve |
+
+## Arquitetura de dados
+
+O SINPRES adota um **Star Schema (modelagem dimensional Kimball)** para separar o catálogo nacional de insumos e composições dos preços, que variam por UF, mês de referência e regime tributário. Essa separação reduz drasticamente o tamanho do catálogo pesquisável (~5 MB e 4.855 linhas, contra 310 MB e 191.742 linhas no desenho anterior) e torna cada insumo uma entidade única, com histórico rastreável.
+
+As seis tabelas do setor Construção Civil (schema `civil_construction`):
+
+| Tabela | Papel | Granularidade |
+|---|---|---|
+| `item_catalog` | Dimensão de insumos (SCD Type 1) | 1 linha por código SINAPI |
+| `item_prices` | Fact table de preços de insumos (periodic snapshot) | código × UF × mês × regime |
+| `composition_catalog` | Dimensão de composições (SCD Type 1) | 1 linha por código SINAPI |
+| `composition_prices` | Fact table de preços de composições (periodic snapshot) | código × UF × mês × regime |
+| `composition_items` | Coeficientes nacionais de insumos dentro de composições | composição × item (invariante por UF) |
+| `categories` | Categorias do setor | 1 linha por categoria |
+
+Além do schema setorial, `public.sectors` mantém o registro dos setores disponíveis na API.
+
+### O campo `previousCode`
+
+Tanto `item_catalog` quanto `composition_catalog` possuem o campo `previous_code` (`previousCode` no JSON de resposta). Ele armazena o código anterior de um insumo ou composição quando a Caixa publica uma substituição explícita — por exemplo, ao substituir o código `11616` pelo `11281`, o novo registro recebe `previous_code = 11616`.
+
+Esse campo é **aditivo** e foi projetado para consumidores externos: se o seu sistema mantém registros locais referenciando códigos SINAPI, você pode consultar periodicamente os códigos da sua base e, quando a resposta retornar `previousCode != null`, atualizar suas referências para o novo código vigente. Quando `previousCode` é `null`, o código é original.
+
+```bash
+curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items/11281" | jq '.data.previousCode'
+# 11616  -> o 11281 substitui o 11616 na sua base
+```
 
 ## Endpoints
 
@@ -105,6 +133,7 @@ curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items/34"
       "generalInfo": "É utilizado em estrutura de concreto armado...",
       "imageUrl": "https://j57uww5mhge9cyoz.public.blob.vercel-storage.com/images/34.jpeg",
       "sourceUpdatedAt": "12/12/2018",
+      "previousCode": null,
       "createdAt": "2026-03-26T15:52:41.194Z"
     }
   ],
@@ -160,6 +189,7 @@ curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/compositions/
     "isDesonerated": false,
     "baseUnitCost": 15000,
     "sourceUpdatedAt": "15/04/2026",
+    "previousCode": null,
     "items": [
       {
         "itemType": "INPUT",
@@ -222,10 +252,67 @@ curl "https://api.sinpres.com.br/api/v1/sinapi/reference-months?state=SP"
 | `SC25KG` | Saco de 25 kg |
 | `KWH` | Quilowatt-hora |
 
+## Rodando localmente
+
+Requisitos: [Bun](https://bun.sh), Docker e Docker Compose.
+
+```bash
+# 1. Dependências
+bun install
+
+# 2. Subir PostgreSQL via docker-compose
+docker-compose up -d
+
+# 3. Aplicar migrations
+bun run db:migrate
+
+# 4. Popular o banco (ver seção "Pipeline de importação" abaixo)
+bun run db:seed
+
+# 5. Subir a API em modo dev
+bun run dev
+```
+
+### Pipeline de importação
+
+O seed é um orquestrador que roda três importadores em sequência, cada um responsável por uma fonte:
+
+| Etapa | Fonte | Script | Popula |
+|---|---|---|---|
+| 1 | XLSX `SINAPI_Referência_AAAA_MM.xlsx` (Caixa) | `src/db/import/sinapi.ts` | `item_catalog`, `item_prices`, `composition_catalog`, `composition_prices`, `composition_items` |
+| 2 | `items.json` (sinapi-extractor) | `src/db/import/enrich-from-extractor.ts` | Enriquece `item_catalog` com normas técnicas, informações gerais, imagens e data da ficha |
+| 3 | XLSX `SINAPI_Manutenções_AAAA_MM.xlsx` (Caixa) | `src/db/import/maintenances.ts` | Preenche `previous_code` em `item_catalog` e `composition_catalog` quando há substituição explícita |
+
+Os caminhos são configuráveis via variáveis de ambiente:
+
+```bash
+SEED_XLSX_PATH=/caminho/SINAPI_Referência_2026_03.xlsx \
+SEED_EXTRACTOR_JSON=/caminho/items.json \
+SEED_MAINTENANCES=/caminho/SINAPI_Manutenções_2026_03.xlsx \
+SEED_REFERENCE_MONTH=2026-03 \
+bun run db:seed
+```
+
+Arquivos ausentes são ignorados com aviso — útil para ambientes sem o bundle mensal completo. Todos os importadores usam `ON CONFLICT DO UPDATE`, portanto o seed é idempotente.
+
+### Testes
+
+```bash
+bun run test
+```
+
 ## Documentação interativa
 
 - **Especificação OpenAPI:** [api.sinpres.com.br/doc](https://api.sinpres.com.br/doc)
 - **Interface web:** [sinpres.com.br](https://sinpres.com.br)
+
+## Ecossistema SINPRES
+
+| Repositório | Descrição |
+|---|---|
+| [`sinpres-api`](https://github.com/sinpres/sinpres-api) | Este projeto — API REST pública |
+| [`sinpres-web`](https://github.com/sinpres/sinpres-web) | Frontend web: documentação renderizada e explorer público |
+| [`sinapi-extractor`](https://github.com/sinpres/sinapi-extractor) | Extrator Python que converte os PDFs de Fichas de Especificações Técnicas da Caixa em `items.json` + imagens, consumido pela etapa 2 do seed |
 
 ## Contribuindo
 

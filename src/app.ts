@@ -84,6 +84,12 @@ GET /api/v1/sinapi/reference-months?state=SP
 
 \`KG\`, \`M\`, \`M2\`, \`M3\`, \`UN\`, \`L\`, \`CJ\`, \`JG\`, \`PAR\`, \`H\`, \`DIA\`, \`MES\`, \`T\`, \`MIL\`, \`CENTO\`, \`SC25KG\`, \`KWH\`, \`100M\`, \`310ML\`, \`MXMES\`, \`M2XMES\`, \`M/MES\`, \`UNXMES\`
 
+## Substituição de códigos (\`previousCode\`)
+
+Os objetos de insumo e composição retornam o campo \`previousCode\`, que indica o código anterior quando a Caixa publica uma substituição explícita (ex: o código \`11616\` foi substituído pelo \`11281\`; nesse caso o registro do \`11281\` retorna \`previousCode: 11616\`).
+
+Use este campo para **detectar se o código que você está consultando é um substituto de outro**, permitindo migrar registros locais (orçamentos, planilhas, integrações) sempre que o SINAPI reorganiza seu catálogo. Quando \`previousCode\` é \`null\`, o código é original e não substitui nenhum código anterior.
+
 ## Links
 
 - [GitHub — sinpres-api](https://github.com/sinpres/sinpres-api)
