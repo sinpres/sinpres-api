@@ -17,3 +17,4 @@ api.log
 input/*
 !input/.gitkeep
 !input/README.md
+.env*.local
