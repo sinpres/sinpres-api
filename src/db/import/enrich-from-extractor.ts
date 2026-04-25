@@ -1,10 +1,16 @@
 /**
- * Enriches existing items in the database with data from sinapi-extractor output.
- * Reads output/items.json and updates matching items by code.
+ * Enriches item_catalog with metadata extracted from sinapi-extractor output.
+ *
+ * Reads a JSON file (default: ../sinapi-extractor/output/items.json) and updates
+ * matching rows in civil_construction.item_catalog by natural code.
+ *
+ * Previously this updated the legacy `items` table, which meant one update per
+ * (state × regime × month) tuple per code — ~40-54 rows touched per code.
+ * With the dimensional schema, each update hits a single catalog row.
  */
 import { db } from '../client'
-import { items } from '../schema/civil-construction'
-import { eq, sql } from 'drizzle-orm'
+import { itemCatalog } from '../schema/civil-construction'
+import { eq } from 'drizzle-orm'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 
@@ -31,17 +37,17 @@ async function main() {
   let notFound = 0
 
   for (const item of extractorItems) {
-    // Try to find matching items by code (may match multiple states/months)
     const result = await db
-      .update(items)
+      .update(itemCatalog)
       .set({
         technicalStandards: item.technical_standards || null,
         generalInfo: item.general_info || null,
         imageUrl: item.image || null,
         sourceUpdatedAt: (item.source_updated_at || null)?.slice(0, 20) || null,
+        updatedAt: new Date(),
       })
-      .where(eq(items.code, item.code))
-      .returning({ id: items.id })
+      .where(eq(itemCatalog.code, item.code))
+      .returning({ id: itemCatalog.id })
 
     if (result.length === 0) {
       notFound++
@@ -56,7 +62,7 @@ async function main() {
 
   console.log(`\nDone!`)
   console.log(`  Rows updated: ${updated}`)
-  console.log(`  Codes not found in DB: ${notFound}`)
+  console.log(`  Codes not found in catalog: ${notFound}`)
   process.exit(0)
 }
 
