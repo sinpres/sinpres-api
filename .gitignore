@@ -11,3 +11,9 @@ CLAUDE.md
 ._*
 import*.log
 api.log
+
+# Seed input — mirrors sinapi-extractor/output/. Populated by `bun run import:month`
+# or by manually copying the JSONs over. Large data, do not commit.
+input/*
+!input/.gitkeep
+!input/README.md

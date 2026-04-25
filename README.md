@@ -294,18 +294,27 @@ Caixa (Web)                sinapi-extractor (Python)              sinpres-api (B
 | 2 | `output/items.json` | `src/db/import/enrich-from-extractor.ts` | Enriquece `item_catalog` com normas, info geral, imagens, data da ficha |
 | 3 | `output/maintenances.json` | `src/db/import/maintenances.ts` | Preenche `previous_code` quando há substituição explícita |
 
-**Workflow mensal típico:**
+**Workflow mensal — atalho de uma linha:**
 
 ```bash
-# 1. Baixar o bundle XLSX da Caixa para ~/Downloads/SINAPI-AAAA-MM-formato-xlsx/
+# 1. Baixar o bundle da Caixa e jogar em ../sinapi-extractor/input/ mantendo os
+#    nomes oficiais (SINAPI_Referência_AAAA_MM.xlsx etc.). A pasta input/ está
+#    no .gitignore do extractor.
 
-# 2. No sinapi-extractor: gerar os JSONs
+# 2. Rodar o pipeline completo passando só o mês:
+bun run import:month 2026-04
+```
+
+Esse atalho roda o extractor em `../sinapi-extractor` e em seguida o seed da API. Internamente é um shell script (`scripts/import-month.sh`) que encadeia os dois passos.
+
+**Workflow manual — quando você quer controle fino dos passos:**
+
+```bash
+# 1. No extractor: gerar os JSONs (input/ deve ter os arquivos)
 cd ../sinapi-extractor
-python3 src/extract_all.py 2026-04 \
-  ~/Downloads/SINAPI-2026-04-formato-xlsx/SINAPI_Referência_2026_04.xlsx \
-  ~/Downloads/SINAPI-2026-04-formato-xlsx/SINAPI_Manutenções_2026_04.xlsx
+python3 src/extract_all.py 2026-04
 
-# 3. No sinpres-api: rodar o seed (consome os JSONs gerados)
+# 2. No api: rodar o seed (consome os JSONs gerados)
 cd ../sinpres-api
 bun run db:seed
 ```

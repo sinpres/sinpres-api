@@ -9,6 +9,7 @@
     "db:generate": "bun drizzle-kit generate",
     "db:migrate": "bun drizzle-kit migrate",
     "db:seed": "bun run src/db/seed/seed.ts",
+    "import:month": "./scripts/import-month.sh",
     "vercel-build": "bun build src/vercel.ts --target=node --outfile=api/index.mjs --external postgres",
     "test": "vitest",
     "test:run": "vitest run"
