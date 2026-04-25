@@ -1,27 +1,34 @@
 {
-  "version": "7",
-  "dialect": "postgresql",
-  "entries": [
-    {
-      "idx": 0,
-      "version": "7",
-      "when": 1777056532070,
-      "tag": "0000_slimy_pretty_boy",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1777061765162,
-      "tag": "0001_talented_the_liberteens",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1777083084143,
-      "tag": "0002_military_guardsmen",
-      "breakpoints": true
-    }
-  ]
+	"version": "7",
+	"dialect": "postgresql",
+	"entries": [
+		{
+			"idx": 0,
+			"version": "7",
+			"when": 1777056532070,
+			"tag": "0000_slimy_pretty_boy",
+			"breakpoints": true
+		},
+		{
+			"idx": 1,
+			"version": "7",
+			"when": 1777061765162,
+			"tag": "0001_talented_the_liberteens",
+			"breakpoints": true
+		},
+		{
+			"idx": 2,
+			"version": "7",
+			"when": 1777083084143,
+			"tag": "0002_military_guardsmen",
+			"breakpoints": true
+		},
+		{
+			"idx": 3,
+			"version": "7",
+			"when": 1777085415943,
+			"tag": "0003_drop_legacy_rename_v2",
+			"breakpoints": true
+		}
+	]
 }

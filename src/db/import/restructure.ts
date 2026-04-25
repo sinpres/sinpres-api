@@ -1,4 +1,17 @@
 /**
+ * HISTORICAL / ONE-SHOT — kept for audit trail only.
+ *
+ * This script was used once during the dimensional restructure (Blocks 1-6) to
+ * populate the new tables from the legacy ones. After Block 6 dropped the legacy
+ * tables (items, compositions, composition_items) and renamed composition_items_v2
+ * to composition_items, running this script WILL FAIL because:
+ *   - The source legacy tables no longer exist.
+ *   - The target table composition_items_v2 no longer exists.
+ *
+ * DO NOT delete this file — it documents the data migration that happened.
+ * For new imports, use src/db/import/sinapi.ts.
+ *
+ * Original description:
  * Data migration script: populates the new dimensional tables from the legacy tables.
  *
  * Target tables (new):
@@ -6,12 +19,12 @@
  *   - civil_construction.item_prices
  *   - civil_construction.composition_catalog
  *   - civil_construction.composition_prices
- *   - civil_construction.composition_items_v2
+ *   - civil_construction.composition_items_v2  (now named composition_items)
  *
  * Source tables (legacy, read-only):
- *   - civil_construction.items
- *   - civil_construction.compositions
- *   - civil_construction.composition_items
+ *   - civil_construction.items                 (DROPPED in Block 6)
+ *   - civil_construction.compositions          (DROPPED in Block 6)
+ *   - civil_construction.composition_items     (DROPPED in Block 6, name reused by v2)
  *
  * Properties:
  *   - SCD Type 1 canonical row by (code, source_updated_at DESC NULLS LAST).

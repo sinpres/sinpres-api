@@ -48,7 +48,7 @@ interface Counts {
   itemPrices: number
   compositionCatalog: number
   compositionPrices: number
-  compositionItemsV2: number
+  compositionItems: number
   itemsWithPrevious: number
   compsWithPrevious: number
 }
@@ -60,7 +60,7 @@ async function countRows(): Promise<Counts> {
       (SELECT COUNT(*)::int FROM civil_construction.item_prices) AS item_prices,
       (SELECT COUNT(*)::int FROM civil_construction.composition_catalog) AS composition_catalog,
       (SELECT COUNT(*)::int FROM civil_construction.composition_prices) AS composition_prices,
-      (SELECT COUNT(*)::int FROM civil_construction.composition_items_v2) AS composition_items_v2,
+      (SELECT COUNT(*)::int FROM civil_construction.composition_items) AS composition_items,
       (SELECT COUNT(*)::int FROM civil_construction.item_catalog WHERE previous_code IS NOT NULL) AS items_with_previous,
       (SELECT COUNT(*)::int FROM civil_construction.composition_catalog WHERE previous_code IS NOT NULL) AS comps_with_previous
   `)) as unknown as { rows?: Record<string, number>[] } | Record<string, number>[]
@@ -72,7 +72,7 @@ async function countRows(): Promise<Counts> {
       itemPrices: 0,
       compositionCatalog: 0,
       compositionPrices: 0,
-      compositionItemsV2: 0,
+      compositionItems: 0,
       itemsWithPrevious: 0,
       compsWithPrevious: 0,
     }
@@ -83,7 +83,7 @@ async function countRows(): Promise<Counts> {
     itemPrices: Number(resultRow.item_prices ?? 0),
     compositionCatalog: Number(resultRow.composition_catalog ?? 0),
     compositionPrices: Number(resultRow.composition_prices ?? 0),
-    compositionItemsV2: Number(resultRow.composition_items_v2 ?? 0),
+    compositionItems: Number(resultRow.composition_items ?? 0),
     itemsWithPrevious: Number(resultRow.items_with_previous ?? 0),
     compsWithPrevious: Number(resultRow.comps_with_previous ?? 0),
   }
@@ -133,7 +133,7 @@ async function main() {
   console.log(`  item_prices:                     ${counts.itemPrices} rows`)
   console.log(`  composition_catalog:             ${counts.compositionCatalog} rows`)
   console.log(`  composition_prices:              ${counts.compositionPrices} rows`)
-  console.log(`  composition_items_v2:            ${counts.compositionItemsV2} rows`)
+  console.log(`  composition_items:               ${counts.compositionItems} rows`)
   console.log(`  items with previous_code:        ${counts.itemsWithPrevious}`)
   console.log(`  compositions with previous_code: ${counts.compsWithPrevious}`)
 }
