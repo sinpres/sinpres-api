@@ -1,6 +1,6 @@
 # input/
 
-Pasta de onde o seed (`bun run db:seed`) lê os JSONs gerados pelo `sinapi-extractor`. Espelha exatamente a estrutura de `sinapi-extractor/output/`:
+Pasta de onde o seed (`bun run db:seed`) lê os JSONs. Espelha exatamente a estrutura de output gerada pelo `sinapi-extractor`:
 
 ```
 input/
@@ -20,22 +20,25 @@ Tudo nesta pasta está no `.gitignore` (exceto este README e o `.gitkeep`). Não
 
 ## Como popular
 
-**Caminho recomendado** — atalho que faz tudo:
+Esta API é **independente do `sinapi-extractor`** — não chama o extractor e não depende dele estar no filesystem. Você gera os JSONs onde quiser (mesma máquina, outra máquina, CI, etc.) e copia pra cá.
+
+O fluxo típico, quando você tem o `sinapi-extractor` localmente:
 
 ```bash
-bun run import:month 2026-04
-```
+# 1. No extractor, gerar os JSONs
+cd ../sinapi-extractor
+python3 src/extract_all.py 2026-04
 
-Esse comando roda o `sinapi-extractor`, copia os JSONs gerados pra cá e em seguida roda o seed. Você só precisa ter os arquivos em `../sinapi-extractor/input/` (ver README de lá).
+# 2. Copiar os JSONs gerados para esta pasta
+cp -r ../sinapi-extractor/output/reference          ./input/reference
+cp    ../sinapi-extractor/output/maintenances.json  ./input/maintenances.json
+cp    ../sinapi-extractor/output/items.json         ./input/items.json
 
-**Caminho manual** — útil se você gerou os JSONs em outra máquina e quer só popular o banco aqui:
-
-```bash
-cp -r ../sinapi-extractor/output/reference  input/reference
-cp    ../sinapi-extractor/output/maintenances.json  input/maintenances.json
-cp    ../sinapi-extractor/output/items.json         input/items.json
+# 3. Rodar o seed
 bun run db:seed
 ```
+
+A cada novo mês SINAPI publicado, repete o ciclo. Os imports são idempotentes — preços do mês novo são inseridos, preços de meses anteriores ficam preservados, e o catálogo é atualizado in-place via SCD Type 1.
 
 ## Sobrescrever caminho via env vars
 

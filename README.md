@@ -275,60 +275,45 @@ bun run dev
 
 ### Pipeline de importação
 
-A SINPRES API **não parseia XLSX nem PDF** — toda a extração de fontes oficiais SINAPI é feita pelo [`sinapi-extractor`](https://github.com/sinpres/sinapi-extractor) (Python), que produz JSONs estáveis. A API apenas consome esses JSONs e popula o banco.
+A SINPRES API **não parseia XLSX nem PDF e não chama o extractor**. Ela é independente: lê apenas JSONs colocados em `input/` e popula o banco. Os JSONs são produzidos pelo [`sinapi-extractor`](https://github.com/sinpres/sinapi-extractor) (Python), mas o desacoplamento permite rodar o extractor em outra máquina, em CI, ou substituí-lo por qualquer outra fonte que produza o mesmo shape JSON.
 
-Fluxo completo:
+| Arquivo em `input/` | Importador | Popula |
+|---|---|---|
+| `reference/` (5 JSONs + metadata) | `src/db/import/sinapi.ts` | `item_catalog`, `item_prices`, `composition_catalog`, `composition_prices`, `composition_items` |
+| `items.json` | `src/db/import/enrich-from-extractor.ts` | Enriquece `item_catalog` com normas, info geral, imagens, data da ficha |
+| `maintenances.json` | `src/db/import/maintenances.ts` | Preenche `previous_code` quando há substituição explícita |
 
-```
-Caixa (Web)                sinapi-extractor (Python)              sinpres-api (Bun/TS)
-┌──────────────┐           ┌────────────────────────────┐         ┌─────────────────────┐
-│ XLSX Refer.  │ ─────────▶│ extract_reference.py       │ ──JSONs─▶│ runReferenceImport  │
-│ XLSX Manut.  │ ─────────▶│ extract_maintenances.py    │ ──JSON──▶│ runMaintenances...  │
-│ PDF Fichas   │ ─────────▶│ extract_technical_sheets.py│ ──JSON──▶│ runExtractorEnrich  │
-└──────────────┘           └────────────────────────────┘         └─────────────────────┘
-```
+A pasta `input/` é gitignored (exceto `.gitkeep` e `README.md`). Detalhes em [`input/README.md`](./input/README.md).
 
-| Etapa | JSON consumido | Importador | Popula |
-|---|---|---|---|
-| 1 | `output/reference/` (5 JSONs + metadata) | `src/db/import/sinapi.ts` | `item_catalog`, `item_prices`, `composition_catalog`, `composition_prices`, `composition_items` |
-| 2 | `output/items.json` | `src/db/import/enrich-from-extractor.ts` | Enriquece `item_catalog` com normas, info geral, imagens, data da ficha |
-| 3 | `output/maintenances.json` | `src/db/import/maintenances.ts` | Preenche `previous_code` quando há substituição explícita |
-
-**Workflow mensal — atalho de uma linha:**
+**Workflow mensal:**
 
 ```bash
-# 1. Baixar o bundle da Caixa e jogar em ../sinapi-extractor/input/ mantendo os
-#    nomes oficiais (SINAPI_Referência_AAAA_MM.xlsx etc.). A pasta input/ está
-#    no .gitignore do extractor.
-
-# 2. Rodar o pipeline completo passando só o mês:
-bun run import:month 2026-04
-```
-
-Esse atalho roda o extractor em `../sinapi-extractor` e em seguida o seed da API. Internamente é um shell script (`scripts/import-month.sh`) que encadeia os dois passos.
-
-**Workflow manual — quando você quer controle fino dos passos:**
-
-```bash
-# 1. No extractor: gerar os JSONs (input/ deve ter os arquivos)
+# 1. No sinapi-extractor (em outra pasta), gerar os JSONs do mês
 cd ../sinapi-extractor
 python3 src/extract_all.py 2026-04
 
-# 2. No api: rodar o seed (consome os JSONs gerados)
+# 2. Copiar os JSONs gerados para input/ desta API
 cd ../sinpres-api
+cp -r ../sinapi-extractor/output/reference          ./input/reference
+cp    ../sinapi-extractor/output/maintenances.json  ./input/maintenances.json
+cp    ../sinapi-extractor/output/items.json         ./input/items.json
+
+# 3. Popular o banco
 bun run db:seed
 ```
 
-Os caminhos dos JSONs apontam por padrão para `../sinapi-extractor/output/`. Para sobrescrever:
+A API não conhece o extractor — você poderia gerar os JSONs em qualquer máquina, baixá-los, soltar em `input/` e rodar `bun run db:seed`.
+
+Para apontar o seed pra outra pasta sem usar `input/`:
 
 ```bash
-SEED_REFERENCE_DIR=/caminho/output/reference \
-SEED_EXTRACTOR_JSON=/caminho/output/items.json \
-SEED_MAINTENANCES=/caminho/output/maintenances.json \
+SEED_REFERENCE_DIR=/caminho/reference \
+SEED_EXTRACTOR_JSON=/caminho/items.json \
+SEED_MAINTENANCES=/caminho/maintenances.json \
 bun run db:seed
 ```
 
-Arquivos ausentes são ignorados com aviso — útil quando você ainda não rodou alguma das etapas do extractor. Todos os importadores usam `ON CONFLICT DO UPDATE`, portanto o seed é idempotente.
+Arquivos ausentes são ignorados com aviso. Todos os importadores usam `ON CONFLICT DO UPDATE`, portanto o seed é idempotente.
 
 ### Testes
 
