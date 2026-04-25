@@ -275,25 +275,51 @@ bun run dev
 
 ### Pipeline de importação
 
-O seed é um orquestrador que roda três importadores em sequência, cada um responsável por uma fonte:
+A SINPRES API **não parseia XLSX nem PDF** — toda a extração de fontes oficiais SINAPI é feita pelo [`sinapi-extractor`](https://github.com/sinpres/sinapi-extractor) (Python), que produz JSONs estáveis. A API apenas consome esses JSONs e popula o banco.
 
-| Etapa | Fonte | Script | Popula |
+Fluxo completo:
+
+```
+Caixa (Web)                sinapi-extractor (Python)              sinpres-api (Bun/TS)
+┌──────────────┐           ┌────────────────────────────┐         ┌─────────────────────┐
+│ XLSX Refer.  │ ─────────▶│ extract_reference.py       │ ──JSONs─▶│ runReferenceImport  │
+│ XLSX Manut.  │ ─────────▶│ extract_maintenances.py    │ ──JSON──▶│ runMaintenances...  │
+│ PDF Fichas   │ ─────────▶│ extract_technical_sheets.py│ ──JSON──▶│ runExtractorEnrich  │
+└──────────────┘           └────────────────────────────┘         └─────────────────────┘
+```
+
+| Etapa | JSON consumido | Importador | Popula |
 |---|---|---|---|
-| 1 | XLSX `SINAPI_Referência_AAAA_MM.xlsx` (Caixa) | `src/db/import/sinapi.ts` | `item_catalog`, `item_prices`, `composition_catalog`, `composition_prices`, `composition_items` |
-| 2 | `items.json` (sinapi-extractor) | `src/db/import/enrich-from-extractor.ts` | Enriquece `item_catalog` com normas técnicas, informações gerais, imagens e data da ficha |
-| 3 | XLSX `SINAPI_Manutenções_AAAA_MM.xlsx` (Caixa) | `src/db/import/maintenances.ts` | Preenche `previous_code` em `item_catalog` e `composition_catalog` quando há substituição explícita |
+| 1 | `output/reference/` (5 JSONs + metadata) | `src/db/import/sinapi.ts` | `item_catalog`, `item_prices`, `composition_catalog`, `composition_prices`, `composition_items` |
+| 2 | `output/items.json` | `src/db/import/enrich-from-extractor.ts` | Enriquece `item_catalog` com normas, info geral, imagens, data da ficha |
+| 3 | `output/maintenances.json` | `src/db/import/maintenances.ts` | Preenche `previous_code` quando há substituição explícita |
 
-Os caminhos são configuráveis via variáveis de ambiente:
+**Workflow mensal típico:**
 
 ```bash
-SEED_XLSX_PATH=/caminho/SINAPI_Referência_2026_03.xlsx \
-SEED_EXTRACTOR_JSON=/caminho/items.json \
-SEED_MAINTENANCES=/caminho/SINAPI_Manutenções_2026_03.xlsx \
-SEED_REFERENCE_MONTH=2026-03 \
+# 1. Baixar o bundle XLSX da Caixa para ~/Downloads/SINAPI-AAAA-MM-formato-xlsx/
+
+# 2. No sinapi-extractor: gerar os JSONs
+cd ../sinapi-extractor
+python3 src/extract_all.py 2026-04 \
+  ~/Downloads/SINAPI-2026-04-formato-xlsx/SINAPI_Referência_2026_04.xlsx \
+  ~/Downloads/SINAPI-2026-04-formato-xlsx/SINAPI_Manutenções_2026_04.xlsx
+
+# 3. No sinpres-api: rodar o seed (consome os JSONs gerados)
+cd ../sinpres-api
 bun run db:seed
 ```
 
-Arquivos ausentes são ignorados com aviso — útil para ambientes sem o bundle mensal completo. Todos os importadores usam `ON CONFLICT DO UPDATE`, portanto o seed é idempotente.
+Os caminhos dos JSONs apontam por padrão para `../sinapi-extractor/output/`. Para sobrescrever:
+
+```bash
+SEED_REFERENCE_DIR=/caminho/output/reference \
+SEED_EXTRACTOR_JSON=/caminho/output/items.json \
+SEED_MAINTENANCES=/caminho/output/maintenances.json \
+bun run db:seed
+```
+
+Arquivos ausentes são ignorados com aviso — útil quando você ainda não rodou alguma das etapas do extractor. Todos os importadores usam `ON CONFLICT DO UPDATE`, portanto o seed é idempotente.
 
 ### Testes
 
@@ -312,7 +338,7 @@ bun run test
 |---|---|
 | [`sinpres-api`](https://github.com/sinpres/sinpres-api) | Este projeto — API REST pública |
 | [`sinpres-web`](https://github.com/sinpres/sinpres-web) | Frontend web: documentação renderizada e explorer público |
-| [`sinapi-extractor`](https://github.com/sinpres/sinapi-extractor) | Extrator Python que converte os PDFs de Fichas de Especificações Técnicas da Caixa em `items.json` + imagens, consumido pela etapa 2 do seed |
+| [`sinapi-extractor`](https://github.com/sinpres/sinapi-extractor) | Extrator Python que converte todas as fontes oficiais SINAPI (XLSX de Referência, XLSX de Manutenções, PDF de Fichas Técnicas) em JSONs estáveis consumidos pelo seed desta API |
 
 ## Contribuindo
 

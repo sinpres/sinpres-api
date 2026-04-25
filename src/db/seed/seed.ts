@@ -1,45 +1,43 @@
 /**
  * Seed orchestrator.
  *
- * Runs the three real SINAPI importers in sequence against files on disk:
- *   1. XLSX reference  (insumos, compositions, analytical items) -> sinapi.ts
- *   2. Extractor JSON  (technical specs, images, etc.)           -> enrich-from-extractor.ts
- *   3. Maintenances    (previous_code substitutions)             -> maintenances.ts
+ * Runs the three importers in sequence, all consuming JSONs produced by the
+ * sinapi-extractor (no XLSX/PDF parsing happens in the API anymore):
+ *   1. Reference bundle  (output/reference/*.json)         -> sinapi.ts (runReferenceImport)
+ *   2. Technical specs   (output/items.json + images/)     -> enrich-from-extractor.ts
+ *   3. Maintenances      (output/maintenances.json)        -> maintenances.ts
  *
- * Paths are configurable via env vars or positional argv, with sensible defaults for
- * Henrik's local layout. Missing files are skipped with a warning rather than aborting,
- * so the seed remains usable in environments without the full monthly bundle.
+ * Paths are configurable via env vars or defaults that point to the local
+ * sinapi-extractor checkout. Missing files are skipped with a warning rather than
+ * aborting, so the seed remains usable in environments without the full bundle.
  *
- * Idempotent: each importer uses ON CONFLICT DO UPDATE, so re-running does not duplicate
- * rows and simply refreshes values.
+ * Idempotent: each importer uses ON CONFLICT DO UPDATE, so re-running does not
+ * duplicate rows and simply refreshes values.
  */
 import { existsSync } from 'fs'
 import { resolve } from 'path'
 import { db } from '../client'
 import { sql } from 'drizzle-orm'
 import { upsertCivilConstructionSector } from './civil-construction'
-import { runSinapiImport } from '../import/sinapi'
+import { runReferenceImport } from '../import/sinapi'
 import { runExtractorEnrich } from '../import/enrich-from-extractor'
 import { runMaintenancesImport } from '../import/maintenances'
 
-const DEFAULT_XLSX = '/Users/henrik/Downloads/SINAPI-2026-03-formato-xlsx/SINAPI_Referência_2026_03.xlsx'
+const DEFAULT_REFERENCE_DIR = '/Volumes/programacao/sinapi-extractor/output/reference'
 const DEFAULT_EXTRACTOR_JSON = '/Volumes/programacao/sinapi-extractor/output/items.json'
-const DEFAULT_MAINTENANCES = '/Users/henrik/Downloads/SINAPI-2026-03-formato-xlsx/SINAPI_Manutenções_2026_03.xlsx'
-const DEFAULT_REFERENCE_MONTH = '2026-03'
+const DEFAULT_MAINTENANCES = '/Volumes/programacao/sinapi-extractor/output/maintenances.json'
 
 interface SeedConfig {
-  xlsxPath: string
+  referenceDir: string
   extractorJsonPath: string
   maintenancesPath: string
-  referenceMonth: string
 }
 
 function resolveConfig(): SeedConfig {
   return {
-    xlsxPath: resolve(process.env.SEED_XLSX_PATH ?? DEFAULT_XLSX),
+    referenceDir: resolve(process.env.SEED_REFERENCE_DIR ?? DEFAULT_REFERENCE_DIR),
     extractorJsonPath: resolve(process.env.SEED_EXTRACTOR_JSON ?? DEFAULT_EXTRACTOR_JSON),
     maintenancesPath: resolve(process.env.SEED_MAINTENANCES ?? DEFAULT_MAINTENANCES),
-    referenceMonth: process.env.SEED_REFERENCE_MONTH ?? DEFAULT_REFERENCE_MONTH,
   }
 }
 
@@ -93,27 +91,31 @@ async function main() {
   const config = resolveConfig()
 
   console.log('=== SINPRES seed — starting ===')
-  console.log(`  xlsxPath:          ${config.xlsxPath}`)
+  console.log(`  referenceDir:      ${config.referenceDir}`)
   console.log(`  extractorJsonPath: ${config.extractorJsonPath}`)
   console.log(`  maintenancesPath:  ${config.maintenancesPath}`)
-  console.log(`  referenceMonth:    ${config.referenceMonth}`)
   console.log('')
 
   await upsertCivilConstructionSector()
 
-  if (existsSync(config.xlsxPath)) {
-    console.log('\n--- [1/3] SINAPI XLSX import ---')
-    await runSinapiImport({ referenceMonth: config.referenceMonth, filePath: config.xlsxPath })
+  const referenceMetadata = resolve(config.referenceDir, 'metadata.json')
+  if (existsSync(referenceMetadata)) {
+    console.log('\n--- [1/3] Reference import (from extractor JSONs) ---')
+    await runReferenceImport({ referenceDir: config.referenceDir })
   } else {
-    console.warn(`[WARN] XLSX not found at ${config.xlsxPath} — skipping SINAPI reference import.`)
+    console.warn(
+      `[WARN] Reference bundle not found at ${config.referenceDir} ` +
+      `(missing metadata.json). Run sinapi-extractor first: ` +
+      `python3 src/extract_reference.py <YYYY-MM> <xlsx>`
+    )
   }
 
   if (existsSync(config.extractorJsonPath)) {
-    console.log('\n--- [2/3] Extractor enrichment ---')
+    console.log('\n--- [2/3] Technical sheets enrichment ---')
     await runExtractorEnrich(config.extractorJsonPath)
   } else {
     console.warn(
-      `[WARN] Extractor JSON not found at ${config.extractorJsonPath} — skipping enrichment.`
+      `[WARN] Extractor items.json not found at ${config.extractorJsonPath} — skipping enrichment.`
     )
   }
 
@@ -122,7 +124,7 @@ async function main() {
     await runMaintenancesImport(config.maintenancesPath)
   } else {
     console.warn(
-      `[WARN] Maintenances file not found at ${config.maintenancesPath} — skipping maintenances import.`
+      `[WARN] Maintenances JSON not found at ${config.maintenancesPath} — skipping maintenances import.`
     )
   }
 
