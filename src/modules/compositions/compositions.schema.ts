@@ -38,13 +38,13 @@ export const CompositionsQuerySchema = paginationQuerySchema.extend({
   search: z.string().optional().openapi({ example: 'alvenaria', description: 'Termo de busca (full-text search em português)' }),
   unit: z.string().optional().openapi({ example: 'M2', description: 'Filtrar por unidade de medida' }),
   state: z.string().length(2).optional().openapi({ example: 'SP', description: 'UF de 2 letras (ex: SP, RJ, MG)' }),
-  month: z.string().regex(/^\d{4}-\d{2}$/).optional().openapi({ example: '2026-04', description: 'Mês de referência no formato AAAA-MM' }),
+  month: z.string().regex(/^\d{4}-\d{2}$/).optional().openapi({ example: '2026-03', description: 'Mês de referência no formato AAAA-MM' }),
   is_desonerated: z.coerce.boolean().default(false).openapi({ example: false, description: 'Regime tributário: true = desonerado, false = não desonerado' }),
 })
 
 export const CompositionDetailQuerySchema = z.object({
   state: z.string().length(2).optional().openapi({ example: 'SP', description: 'UF de 2 letras (ex: SP, RJ, MG)' }),
-  month: z.string().regex(/^\d{4}-\d{2}$/).optional().openapi({ example: '2026-04', description: 'Mês de referência no formato AAAA-MM' }),
+  month: z.string().regex(/^\d{4}-\d{2}$/).optional().openapi({ example: '2026-03', description: 'Mês de referência no formato AAAA-MM' }),
   is_desonerated: z.coerce.boolean().default(false).openapi({ example: false, description: 'Regime tributário: true = desonerado, false = não desonerado' }),
 })
 

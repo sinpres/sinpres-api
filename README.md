@@ -106,7 +106,7 @@ curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items?search=
 **Filtrar por unidade (quilograma) e mês de referência:**
 
 ```bash
-curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items?unit=KG&month=2026-04&page=2"
+curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items?unit=KG&month=2026-03&page=2"
 ```
 
 **Consultar insumo pelo código SINAPI:**
@@ -126,7 +126,7 @@ curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items/34"
       "description": "ACO CA-50, 10,0 MM, VERGALHAO",
       "unit": "KG",
       "stateCode": "SP",
-      "referenceMonth": "2026-04",
+      "referenceMonth": "2026-03",
       "isDesonerated": false,
       "unitPrice": 1234,
       "technicalStandards": "NBR 6118:2014; NBR 14931:2003; NBR 7480:2022",
@@ -185,7 +185,7 @@ curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/compositions/
     "description": "ALVENARIA DE VEDAÇÃO EM BLOCO CERÂMICO 9X19X19",
     "unit": "M2",
     "stateCode": "SP",
-    "referenceMonth": "2026-04",
+    "referenceMonth": "2026-03",
     "isDesonerated": false,
     "baseUnitCost": 15000,
     "sourceUpdatedAt": "15/04/2026",
