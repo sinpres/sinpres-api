@@ -32,37 +32,70 @@ export async function getLatestReferenceMonth(state?: string): Promise<string | 
   return result[0]?.referenceMonth ?? null
 }
 
+/**
+ * Returns paginated compositions.
+ * - When `state` is provided: joins with prices and returns one row per (code, state, month, regime).
+ * - When `state` is omitted: returns the catalog only — one row per code, with stateCode/baseUnitCost null.
+ */
 export async function getCompositions(schemaName: string, filter: CompositionsFilter) {
   if (schemaName !== 'civil_construction') {
     return { compositions: [], total: 0 }
   }
 
   const catalog = civilConstructionCompositionCatalog
+
+  // National mode — catalog only
+  if (!filter.state) {
+    const conditions = []
+    if (filter.unit) conditions.push(eq(catalog.unit, filter.unit.toUpperCase()))
+    if (filter.search) {
+      conditions.push(
+        sql`to_tsvector('portuguese', ${catalog.description}) @@ plainto_tsquery('portuguese', ${filter.search})`
+      )
+    }
+    const where = conditions.length > 0 ? and(...conditions) : undefined
+    const offset = (filter.page - 1) * filter.limit
+
+    const [rows, totalResult] = await Promise.all([
+      db.select().from(catalog).where(where).limit(filter.limit).offset(offset).orderBy(asc(catalog.code)),
+      db.select({ total: count() }).from(catalog).where(where),
+    ])
+
+    const compositions = rows.map((r) => ({
+      id: r.id,
+      code: r.code,
+      description: r.description,
+      unit: r.unit,
+      stateCode: null as string | null,
+      referenceMonth: null as string | null,
+      isDesonerated: null as boolean | null,
+      baseUnitCost: null as number | null,
+      sourceUpdatedAt: r.sourceUpdatedAt,
+      previousCode: r.previousCode,
+      createdAt: r.createdAt,
+    }))
+
+    return { compositions, total: totalResult[0].total }
+  }
+
+  // State-filtered mode
   const prices = civilConstructionCompositionPrices
   const conditions = []
 
-  if (filter.unit) {
-    conditions.push(eq(catalog.unit, filter.unit.toUpperCase()))
-  }
-
+  if (filter.unit) conditions.push(eq(catalog.unit, filter.unit.toUpperCase()))
   if (filter.search) {
     conditions.push(
       sql`to_tsvector('portuguese', ${catalog.description}) @@ plainto_tsquery('portuguese', ${filter.search})`
     )
   }
-
-  if (filter.state) {
-    conditions.push(eq(prices.stateCode, filter.state.toUpperCase()))
-  }
+  conditions.push(eq(prices.stateCode, filter.state.toUpperCase()))
 
   const month = filter.month ?? (await getLatestReferenceMonth(filter.state)) ?? undefined
-  if (month) {
-    conditions.push(eq(prices.referenceMonth, month))
-  }
+  if (month) conditions.push(eq(prices.referenceMonth, month))
 
   conditions.push(eq(prices.isDesonerated, filter.is_desonerated ?? false))
 
-  const where = conditions.length > 0 ? and(...conditions) : undefined
+  const where = and(...conditions)
   const offset = (filter.page - 1) * filter.limit
 
   const selection = {
@@ -86,7 +119,7 @@ export async function getCompositions(schemaName: string, filter: CompositionsFi
       .where(where)
       .limit(filter.limit)
       .offset(offset)
-      .orderBy(asc(catalog.code), asc(prices.stateCode)),
+      .orderBy(asc(catalog.code)),
     db.select({ total: count() })
       .from(prices)
       .innerJoin(catalog, eq(prices.catalogId, catalog.id))
@@ -102,17 +135,67 @@ export async function getCompositionByCode(schemaName: string, code: number, fil
   }
 
   const catalog = civilConstructionCompositionCatalog
-  const prices = civilConstructionCompositionPrices
-  const conditions = [eq(catalog.code, code)]
 
-  if (filter.state) {
-    conditions.push(eq(prices.stateCode, filter.state.toUpperCase()))
+  // No state filter -> return catalog row + composition_items with NO computed prices
+  if (!filter.state) {
+    const result = await db.select().from(catalog).where(eq(catalog.code, code)).limit(1)
+    const r = result[0]
+    if (!r) return null
+
+    const itemsRaw = await db.execute<{
+      item_type: 'INPUT' | 'SUB_COMPOSITION'
+      item_code: number
+      description: string
+      unit: string
+      resource_type: string | null
+      coefficient: string
+    }>(sql`
+      SELECT ci.item_type, ci.item_code, ci.description, ci.unit, ci.resource_type, ci.coefficient::text AS coefficient
+      FROM civil_construction.composition_items ci
+      WHERE ci.composition_id = ${r.id}
+      ORDER BY ci.item_code ASC
+      LIMIT 1000
+    `)
+    const rows = (itemsRaw as unknown as { rows?: unknown[] }).rows ?? (itemsRaw as unknown as unknown[])
+    const itemRows = rows as Array<{
+      item_type: 'INPUT' | 'SUB_COMPOSITION'
+      item_code: number
+      description: string
+      unit: string
+      resource_type: string | null
+      coefficient: string
+    }>
+
+    return {
+      id: r.id,
+      code: r.code,
+      description: r.description,
+      unit: r.unit,
+      stateCode: null as string | null,
+      referenceMonth: null as string | null,
+      isDesonerated: null as boolean | null,
+      baseUnitCost: null as number | null,
+      sourceUpdatedAt: r.sourceUpdatedAt,
+      previousCode: r.previousCode,
+      createdAt: r.createdAt,
+      items: itemRows.map((row) => ({
+        itemType: row.item_type,
+        code: row.item_code,
+        description: row.description,
+        unit: row.unit,
+        resourceType: row.resource_type as 'MATERIAL' | 'LABOR' | 'EQUIPMENT' | null,
+        coefficient: row.coefficient,
+        unitPrice: 0,
+        totalPrice: 0,
+      })),
+    }
   }
+
+  const prices = civilConstructionCompositionPrices
+  const conditions = [eq(catalog.code, code), eq(prices.stateCode, filter.state.toUpperCase())]
 
   const month = filter.month ?? (await getLatestReferenceMonth(filter.state)) ?? undefined
-  if (month) {
-    conditions.push(eq(prices.referenceMonth, month))
-  }
+  if (month) conditions.push(eq(prices.referenceMonth, month))
 
   const isDesonerated = filter.is_desonerated ?? false
   conditions.push(eq(prices.isDesonerated, isDesonerated))
@@ -137,7 +220,7 @@ export async function getCompositionByCode(schemaName: string, code: number, fil
     .from(prices)
     .innerJoin(catalog, eq(prices.catalogId, catalog.id))
     .where(where)
-    .orderBy(desc(prices.referenceMonth), asc(prices.stateCode))
+    .orderBy(desc(prices.referenceMonth))
     .limit(1)
 
   const composition = result[0]

@@ -29,37 +29,76 @@ export async function getLatestReferenceMonth(state?: string): Promise<string | 
   return result[0]?.referenceMonth ?? null
 }
 
+/**
+ * Returns paginated items.
+ * - When `state` is provided: joins with prices and returns one row per (code, state, month, regime).
+ * - When `state` is omitted: returns the catalog only — one row per code, with stateCode/unitPrice null.
+ *   This is the "national browsing" mode used by the public explorer.
+ */
 export async function getItems(schemaName: string, filter: ItemsFilter) {
   if (schemaName !== 'civil_construction') {
     return { items: [], total: 0 }
   }
 
   const catalog = civilConstructionItemCatalog
+
+  // National mode — catalog only, no JOIN with prices
+  if (!filter.state) {
+    const conditions = []
+    if (filter.unit) conditions.push(eq(catalog.unit, filter.unit.toUpperCase()))
+    if (filter.search) {
+      conditions.push(
+        sql`to_tsvector('portuguese', ${catalog.description} || ' ' || coalesce(${catalog.generalInfo}, '')) @@ plainto_tsquery('portuguese', ${filter.search})`
+      )
+    }
+    const where = conditions.length > 0 ? and(...conditions) : undefined
+    const offset = (filter.page - 1) * filter.limit
+
+    const [rows, totalResult] = await Promise.all([
+      db.select().from(catalog).where(where).limit(filter.limit).offset(offset).orderBy(asc(catalog.code)),
+      db.select({ total: count() }).from(catalog).where(where),
+    ])
+
+    const items = rows.map((r) => ({
+      id: r.id,
+      categoryId: r.categoryId,
+      code: r.code,
+      description: r.description,
+      unit: r.unit,
+      stateCode: null as string | null,
+      referenceMonth: null as string | null,
+      isDesonerated: null as boolean | null,
+      unitPrice: null as number | null,
+      technicalStandards: r.technicalStandards,
+      generalInfo: r.generalInfo,
+      imageUrl: r.imageUrl,
+      metadata: r.metadata,
+      sourceUpdatedAt: r.sourceUpdatedAt,
+      previousCode: r.previousCode,
+      createdAt: r.createdAt,
+    }))
+
+    return { items, total: totalResult[0].total }
+  }
+
+  // State-filtered mode — JOIN with prices
   const prices = civilConstructionItemPrices
   const conditions = []
 
-  if (filter.unit) {
-    conditions.push(eq(catalog.unit, filter.unit.toUpperCase()))
-  }
-
+  if (filter.unit) conditions.push(eq(catalog.unit, filter.unit.toUpperCase()))
   if (filter.search) {
     conditions.push(
       sql`to_tsvector('portuguese', ${catalog.description} || ' ' || coalesce(${catalog.generalInfo}, '')) @@ plainto_tsquery('portuguese', ${filter.search})`
     )
   }
-
-  if (filter.state) {
-    conditions.push(eq(prices.stateCode, filter.state.toUpperCase()))
-  }
+  conditions.push(eq(prices.stateCode, filter.state.toUpperCase()))
 
   const month = filter.month ?? (await getLatestReferenceMonth(filter.state)) ?? undefined
-  if (month) {
-    conditions.push(eq(prices.referenceMonth, month))
-  }
+  if (month) conditions.push(eq(prices.referenceMonth, month))
 
   conditions.push(eq(prices.isDesonerated, filter.is_desonerated ?? false))
 
-  const where = conditions.length > 0 ? and(...conditions) : undefined
+  const where = and(...conditions)
   const offset = (filter.page - 1) * filter.limit
 
   const selection = {
@@ -88,7 +127,7 @@ export async function getItems(schemaName: string, filter: ItemsFilter) {
       .where(where)
       .limit(filter.limit)
       .offset(offset)
-      .orderBy(asc(catalog.code), asc(prices.stateCode)),
+      .orderBy(asc(catalog.code)),
     db.select({ total: count() })
       .from(prices)
       .innerJoin(catalog, eq(prices.catalogId, catalog.id))
@@ -104,17 +143,37 @@ export async function getItemByCode(schemaName: string, code: number, filter: { 
   }
 
   const catalog = civilConstructionItemCatalog
-  const prices = civilConstructionItemPrices
-  const conditions = [eq(catalog.code, code)]
 
-  if (filter.state) {
-    conditions.push(eq(prices.stateCode, filter.state.toUpperCase()))
+  // No state filter -> return catalog row only, no price
+  if (!filter.state) {
+    const result = await db.select().from(catalog).where(eq(catalog.code, code)).limit(1)
+    const r = result[0]
+    if (!r) return null
+    return {
+      id: r.id,
+      categoryId: r.categoryId,
+      code: r.code,
+      description: r.description,
+      unit: r.unit,
+      stateCode: null as string | null,
+      referenceMonth: null as string | null,
+      isDesonerated: null as boolean | null,
+      unitPrice: null as number | null,
+      technicalStandards: r.technicalStandards,
+      generalInfo: r.generalInfo,
+      imageUrl: r.imageUrl,
+      metadata: r.metadata,
+      sourceUpdatedAt: r.sourceUpdatedAt,
+      previousCode: r.previousCode,
+      createdAt: r.createdAt,
+    }
   }
+
+  const prices = civilConstructionItemPrices
+  const conditions = [eq(catalog.code, code), eq(prices.stateCode, filter.state.toUpperCase())]
 
   const month = filter.month ?? (await getLatestReferenceMonth(filter.state)) ?? undefined
-  if (month) {
-    conditions.push(eq(prices.referenceMonth, month))
-  }
+  if (month) conditions.push(eq(prices.referenceMonth, month))
 
   conditions.push(eq(prices.isDesonerated, filter.is_desonerated ?? false))
 
@@ -143,7 +202,7 @@ export async function getItemByCode(schemaName: string, code: number, filter: { 
     .from(prices)
     .innerJoin(catalog, eq(prices.catalogId, catalog.id))
     .where(where)
-    .orderBy(desc(prices.referenceMonth), asc(prices.stateCode))
+    .orderBy(desc(prices.referenceMonth))
     .limit(1)
 
   return result[0] ?? null
