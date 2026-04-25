@@ -67,7 +67,7 @@ GET /api/v1/sectors/civil-construction/compositions/7327
 
 ### 5. Filtrar por UF e mês de referência
 \`\`\`
-GET /api/v1/sectors/civil-construction/items?state=SP&month=2026-04
+GET /api/v1/sectors/civil-construction/items?state=SP&month=2026-03
 \`\`\`
 
 ### 6. Listar UFs disponíveis
