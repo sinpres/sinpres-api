@@ -1,5 +1,9 @@
 import { db } from '../../db/client'
-import { civilConstructionCompositions, civilConstructionCompositionItems } from '../../db/schema'
+import {
+  civilConstructionCompositionCatalog,
+  civilConstructionCompositionPrices,
+  civilConstructionCompositionItemsV2,
+} from '../../db/schema'
 import { eq, sql, and, count, desc, asc } from 'drizzle-orm'
 import type { PaginationQuery } from '../../shared/pagination'
 
@@ -12,18 +16,18 @@ interface CompositionsFilter extends PaginationQuery {
 }
 
 export async function getLatestReferenceMonth(state?: string): Promise<string | null> {
-  const table = civilConstructionCompositions
+  const prices = civilConstructionCompositionPrices
   const conditions = []
   if (state) {
-    conditions.push(eq(table.stateCode, state.toUpperCase()))
+    conditions.push(eq(prices.stateCode, state.toUpperCase()))
   }
   const where = conditions.length > 0 ? and(...conditions) : undefined
 
   const result = await db
-    .select({ referenceMonth: table.referenceMonth })
-    .from(table)
+    .select({ referenceMonth: prices.referenceMonth })
+    .from(prices)
     .where(where)
-    .orderBy(desc(table.referenceMonth))
+    .orderBy(desc(prices.referenceMonth))
     .limit(1)
 
   return result[0]?.referenceMonth ?? null
@@ -34,42 +38,59 @@ export async function getCompositions(schemaName: string, filter: CompositionsFi
     return { compositions: [], total: 0 }
   }
 
-  const table = civilConstructionCompositions
+  const catalog = civilConstructionCompositionCatalog
+  const prices = civilConstructionCompositionPrices
   const conditions = []
 
   if (filter.unit) {
-    conditions.push(eq(table.unit, filter.unit.toUpperCase()))
+    conditions.push(eq(catalog.unit, filter.unit.toUpperCase()))
   }
 
   if (filter.search) {
     conditions.push(
-      sql`to_tsvector('portuguese', ${table.description}) @@ plainto_tsquery('portuguese', ${filter.search})`
+      sql`to_tsvector('portuguese', ${catalog.description}) @@ plainto_tsquery('portuguese', ${filter.search})`
     )
   }
 
   if (filter.state) {
-    conditions.push(eq(table.stateCode, filter.state.toUpperCase()))
+    conditions.push(eq(prices.stateCode, filter.state.toUpperCase()))
   }
 
   const month = filter.month ?? (await getLatestReferenceMonth(filter.state)) ?? undefined
   if (month) {
-    conditions.push(eq(table.referenceMonth, month))
+    conditions.push(eq(prices.referenceMonth, month))
   }
 
-  conditions.push(eq(table.isDesonerated, filter.is_desonerated ?? false))
+  conditions.push(eq(prices.isDesonerated, filter.is_desonerated ?? false))
 
   const where = conditions.length > 0 ? and(...conditions) : undefined
   const offset = (filter.page - 1) * filter.limit
 
+  const selection = {
+    id: catalog.id,
+    code: catalog.code,
+    description: catalog.description,
+    unit: catalog.unit,
+    stateCode: prices.stateCode,
+    referenceMonth: prices.referenceMonth,
+    isDesonerated: prices.isDesonerated,
+    baseUnitCost: prices.baseUnitCost,
+    sourceUpdatedAt: catalog.sourceUpdatedAt,
+    previousCode: catalog.previousCode,
+    createdAt: catalog.createdAt,
+  }
+
   const [compositions, totalResult] = await Promise.all([
-    db.select()
-      .from(table)
+    db.select(selection)
+      .from(prices)
+      .innerJoin(catalog, eq(prices.catalogId, catalog.id))
       .where(where)
       .limit(filter.limit)
       .offset(offset)
-      .orderBy(asc(table.code), asc(table.stateCode)),
+      .orderBy(asc(catalog.code), asc(prices.stateCode)),
     db.select({ total: count() })
-      .from(table)
+      .from(prices)
+      .innerJoin(catalog, eq(prices.catalogId, catalog.id))
       .where(where),
   ])
 
@@ -81,79 +102,123 @@ export async function getCompositionByCode(schemaName: string, code: number, fil
     return null
   }
 
-  const table = civilConstructionCompositions
-  const conditions = [eq(table.code, code)]
+  const catalog = civilConstructionCompositionCatalog
+  const prices = civilConstructionCompositionPrices
+  const conditions = [eq(catalog.code, code)]
 
   if (filter.state) {
-    conditions.push(eq(table.stateCode, filter.state.toUpperCase()))
+    conditions.push(eq(prices.stateCode, filter.state.toUpperCase()))
   }
 
   const month = filter.month ?? (await getLatestReferenceMonth(filter.state)) ?? undefined
   if (month) {
-    conditions.push(eq(table.referenceMonth, month))
+    conditions.push(eq(prices.referenceMonth, month))
   }
 
-  conditions.push(eq(table.isDesonerated, filter.is_desonerated ?? false))
+  const isDesonerated = filter.is_desonerated ?? false
+  conditions.push(eq(prices.isDesonerated, isDesonerated))
 
   const where = and(...conditions)
 
-  const result = await db.select()
-    .from(table)
+  const selection = {
+    id: catalog.id,
+    code: catalog.code,
+    description: catalog.description,
+    unit: catalog.unit,
+    stateCode: prices.stateCode,
+    referenceMonth: prices.referenceMonth,
+    isDesonerated: prices.isDesonerated,
+    baseUnitCost: prices.baseUnitCost,
+    sourceUpdatedAt: catalog.sourceUpdatedAt,
+    previousCode: catalog.previousCode,
+    createdAt: catalog.createdAt,
+  }
+
+  const result = await db.select(selection)
+    .from(prices)
+    .innerJoin(catalog, eq(prices.catalogId, catalog.id))
     .where(where)
-    .orderBy(desc(table.referenceMonth), asc(table.stateCode))
+    .orderBy(desc(prices.referenceMonth), asc(prices.stateCode))
     .limit(1)
 
   const composition = result[0]
   if (!composition) return null
 
-  // Composition items are shared across all state instances of the same composition code,
-  // so we look them up via any composition with the same code/month/desonerated flag.
-  const items = await db.select({
-    itemType: civilConstructionCompositionItems.itemType,
-    code: civilConstructionCompositionItems.code,
-    description: civilConstructionCompositionItems.description,
-    unit: civilConstructionCompositionItems.unit,
-    resourceType: civilConstructionCompositionItems.resourceType,
-    coefficient: civilConstructionCompositionItems.coefficient,
-    unitPrice: civilConstructionCompositionItems.unitPrice,
-    totalPrice: civilConstructionCompositionItems.totalPrice,
+  const stateCode = composition.stateCode
+  const referenceMonth = composition.referenceMonth
+
+  const itemsRaw = await db.execute<{
+    item_type: 'INPUT' | 'SUB_COMPOSITION'
+    item_code: number
+    description: string
+    unit: string
+    resource_type: string | null
+    coefficient: string
+    unit_price: number
+  }>(sql`
+    SELECT
+      ci.item_type,
+      ci.item_code,
+      ci.description,
+      ci.unit,
+      ci.resource_type,
+      ci.coefficient::text AS coefficient,
+      COALESCE(
+        CASE
+          WHEN ci.item_type = 'INPUT' THEN ip.unit_price
+          WHEN ci.item_type = 'SUB_COMPOSITION' THEN cp.base_unit_cost
+        END,
+        0
+      )::int AS unit_price
+    FROM civil_construction.composition_items_v2 ci
+    LEFT JOIN civil_construction.item_catalog ic
+      ON ic.code = ci.item_code AND ci.item_type = 'INPUT'
+    LEFT JOIN civil_construction.item_prices ip
+      ON ip.catalog_id = ic.id
+     AND ip.state_code = ${stateCode}
+     AND ip.reference_month = ${referenceMonth}
+     AND ip.is_desonerated = ${isDesonerated}
+    LEFT JOIN civil_construction.composition_catalog cc
+      ON cc.code = ci.item_code AND ci.item_type = 'SUB_COMPOSITION'
+    LEFT JOIN civil_construction.composition_prices cp
+      ON cp.catalog_id = cc.id
+     AND cp.state_code = ${stateCode}
+     AND cp.reference_month = ${referenceMonth}
+     AND cp.is_desonerated = ${isDesonerated}
+    WHERE ci.composition_id = ${composition.id}
+    ORDER BY ci.item_code ASC
+    LIMIT 1000
+  `)
+
+  const rows = (itemsRaw as unknown as { rows?: unknown[] }).rows ?? (itemsRaw as unknown as unknown[])
+  const itemRows = rows as Array<{
+    item_type: 'INPUT' | 'SUB_COMPOSITION'
+    item_code: number
+    description: string
+    unit: string
+    resource_type: string | null
+    coefficient: string
+    unit_price: number | string
+  }>
+
+  const items = itemRows.map((row) => {
+    const unitPrice = Number(row.unit_price) || 0
+    const coefficient = row.coefficient
+    const totalPrice = Math.round(Number(coefficient) * unitPrice)
+    return {
+      itemType: row.item_type,
+      code: row.item_code,
+      description: row.description,
+      unit: row.unit,
+      resourceType: row.resource_type as 'MATERIAL' | 'LABOR' | 'EQUIPMENT' | null,
+      coefficient,
+      unitPrice,
+      totalPrice,
+    }
   })
-    .from(civilConstructionCompositionItems)
-    .innerJoin(
-      civilConstructionCompositions,
-      eq(civilConstructionCompositionItems.compositionId, civilConstructionCompositions.id)
-    )
-    .where(and(
-      eq(civilConstructionCompositions.code, code),
-      eq(civilConstructionCompositions.referenceMonth, composition.referenceMonth)
-      // Note: composition items are identical across desonerated/non-desonerated instances,
-      // so we don't filter by isDesonerated here. The import may attach items to either variant.
-    ))
-    .groupBy(
-      civilConstructionCompositionItems.id,
-      civilConstructionCompositionItems.itemType,
-      civilConstructionCompositionItems.code,
-      civilConstructionCompositionItems.description,
-      civilConstructionCompositionItems.unit,
-      civilConstructionCompositionItems.resourceType,
-      civilConstructionCompositionItems.coefficient,
-      civilConstructionCompositionItems.unitPrice,
-      civilConstructionCompositionItems.totalPrice
-    )
-    .orderBy(asc(civilConstructionCompositionItems.code))
-    .limit(1000)
 
   return {
     ...composition,
-    items: items.map((item) => ({
-      itemType: item.itemType as 'INPUT' | 'SUB_COMPOSITION',
-      code: item.code,
-      description: item.description,
-      unit: item.unit,
-      resourceType: item.resourceType as 'MATERIAL' | 'LABOR' | 'EQUIPMENT' | null,
-      coefficient: item.coefficient,
-      unitPrice: item.unitPrice,
-      totalPrice: item.totalPrice,
-    })),
+    items,
   }
 }

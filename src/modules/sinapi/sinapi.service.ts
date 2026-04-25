@@ -1,11 +1,11 @@
 import { db } from '../../db/client'
-import { civilConstructionItems, civilConstructionCompositions } from '../../db/schema'
-import { sql, desc, eq, and } from 'drizzle-orm'
+import { civilConstructionItemPrices, civilConstructionCompositionPrices } from '../../db/schema'
+import { desc, eq, and } from 'drizzle-orm'
 
 export async function getAvailableStates(): Promise<string[]> {
   const [itemStates, compositionStates] = await Promise.all([
-    db.selectDistinct({ stateCode: civilConstructionItems.stateCode }).from(civilConstructionItems),
-    db.selectDistinct({ stateCode: civilConstructionCompositions.stateCode }).from(civilConstructionCompositions),
+    db.selectDistinct({ stateCode: civilConstructionItemPrices.stateCode }).from(civilConstructionItemPrices),
+    db.selectDistinct({ stateCode: civilConstructionCompositionPrices.stateCode }).from(civilConstructionCompositionPrices),
   ])
 
   const states = new Set<string>()
@@ -18,15 +18,15 @@ export async function getAvailableStates(): Promise<string[]> {
 export async function getReferenceMonths(state?: string): Promise<string[]> {
   const conditions = []
   if (state) {
-    conditions.push(eq(civilConstructionItems.stateCode, state.toUpperCase()))
+    conditions.push(eq(civilConstructionItemPrices.stateCode, state.toUpperCase()))
   }
   const where = conditions.length > 0 ? and(...conditions) : undefined
 
   const result = await db
-    .selectDistinct({ referenceMonth: civilConstructionItems.referenceMonth })
-    .from(civilConstructionItems)
+    .selectDistinct({ referenceMonth: civilConstructionItemPrices.referenceMonth })
+    .from(civilConstructionItemPrices)
     .where(where)
-    .orderBy(desc(civilConstructionItems.referenceMonth))
+    .orderBy(desc(civilConstructionItemPrices.referenceMonth))
 
   return result.map((r) => r.referenceMonth)
 }

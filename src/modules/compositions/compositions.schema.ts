@@ -22,6 +22,7 @@ export const CompositionSchema = z.object({
   isDesonerated: z.boolean(),
   baseUnitCost: z.number(),
   sourceUpdatedAt: z.string().nullable(),
+  previousCode: z.number().nullable(),
   createdAt: z.string(),
 })
 

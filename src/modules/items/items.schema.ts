@@ -3,6 +3,7 @@ import { paginationQuerySchema } from '../../shared/pagination'
 
 export const ItemSchema = z.object({
   id: z.number(),
+  categoryId: z.number().nullable(),
   code: z.number(),
   description: z.string(),
   unit: z.string(),
@@ -15,6 +16,7 @@ export const ItemSchema = z.object({
   imageUrl: z.string().nullable(),
   metadata: z.any().nullable(),
   sourceUpdatedAt: z.string().nullable(),
+  previousCode: z.number().nullable(),
   createdAt: z.string(),
 })
 
