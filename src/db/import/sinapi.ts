@@ -1,443 +1,116 @@
 /**
- * SINAPI XLSX importer — writes to the new dimensional tables only.
+ * SINAPI reference importer — consumes JSONs produced by sinapi-extractor.
  *
- * Targets (new):
- *   - civil_construction.item_catalog         (upsert by code, SCD Type 1)
- *   - civil_construction.item_prices          (upsert by (catalog_id, state, month, regime))
- *   - civil_construction.composition_catalog  (upsert by code, SCD Type 1)
- *   - civil_construction.composition_prices   (upsert by (catalog_id, state, month, regime))
- *   - civil_construction.composition_items    (upsert by (composition_id, item_type, item_code))
+ * Reads the JSON bundle from sinapi-extractor's `output/reference/` directory and
+ * upserts the five dimensional tables. No XLSX parsing happens here — that lives
+ * entirely in the Python extractor (sinapi-extractor/src/extract_reference.py).
  *
- * Fields NOT populated by this importer:
- *   - previous_code          -> populated by maintenances.ts
+ * Expected bundle layout:
+ *   <referenceDir>/
+ *     metadata.json              { reference_month, generated_at, source_file }
+ *     items_catalog.json         [{ code, description, unit }]
+ *     items_prices.json          [{ code, state_code, reference_month, is_desonerated, unit_price }]
+ *     compositions_catalog.json  [{ code, description, unit }]
+ *     compositions_prices.json   [{ code, state_code, reference_month, is_desonerated, base_unit_cost }]
+ *     composition_items.json     [{ composition_code, item_type, item_code, description, unit, coefficient }]
+ *
+ * Catalog upserts are SCD Type 1 — when description or unit diverge from the existing
+ * row, a structured WARNING is logged before the values are overwritten. Prices and
+ * composition_items are upserted with conflict resolution that allows re-importing
+ * the same reference month idempotently to correct values.
+ *
+ * Fields not populated here:
+ *   - previous_code      -> populated by maintenances.ts
  *   - image_url, technical_standards, general_info, source_updated_at
- *                            -> populated by enrich-from-extractor.ts
- *   - resource_type          -> left null (XLSX ISD/ICD does not expose it in a clear column;
- *                               the Analítico "TIPO" is item_type INSUMO/COMPOSICAO, which is
- *                               orthogonal to resource_type MATERIAL/MAO_DE_OBRA/EQUIPAMENTO).
- *
- * On re-runs, description/unit divergences against the current catalog row are logged as
- * WARNINGs before the SCD Type 1 update overwrites the catalog values.
+ *                        -> populated by enrich-from-extractor.ts
+ *   - resource_type      -> left null (XLSX does not expose it cleanly)
  */
-import * as XLSX from 'xlsx'
+
 import { db } from '../client'
-import { itemCatalog, itemPrices, compositionCatalog, compositionPrices, compositionItems } from '../schema/civil-construction'
-import { sql } from 'drizzle-orm'
-import { resolve } from 'path'
+import {
+  itemCatalog, itemPrices, compositionCatalog, compositionPrices, compositionItems,
+} from '../schema/civil-construction'
+import { sql, eq } from 'drizzle-orm'
+import { readFileSync } from 'fs'
+import { resolve, join } from 'path'
 
-export interface RunSinapiImportArgs {
-  referenceMonth: string
-  filePath: string
-}
-
-function normalizeHeader(val: unknown): string {
-  if (val === null || val === undefined) return ''
-  return String(val)
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toUpperCase()
-    .replace(/\r?\n/g, ' ')
-    .replace(/[^A-Z0-9\s]/g, ' ')
-    .trim()
-    .replace(/\s+/g, '_')
-}
-
-function findHeaderRow(rows: unknown[][], keywords: string[]): number {
-  for (let i = 0; i < Math.min(rows.length, 30); i++) {
-    const normalized = rows[i].map(normalizeHeader).join('_')
-    if (keywords.every((k) => normalized.includes(k))) {
-      return i
-    }
-  }
-  return -1
-}
-
-function extractUFsFromRow3(row: unknown[]): string[] {
-  const ufs: string[] = []
-  for (const cell of row) {
-    const val = String(cell ?? '').trim().toUpperCase()
-    if (/^[A-Z]{2}$/.test(val) && !ufs.includes(val)) {
-      ufs.push(val)
-    }
-  }
-  return ufs
-}
-
-interface ParsedItem {
+interface ItemCatalogJson { code: number; description: string; unit: string }
+interface ItemPriceJson {
   code: number
-  description: string
-  unit: string
-  stateCode: string
-  referenceMonth: string
-  isDesonerated: boolean
-  unitPrice: number
+  state_code: string
+  reference_month: string
+  is_desonerated: boolean
+  unit_price: number
 }
-
-interface ParsedComposition {
+interface CompositionCatalogJson { code: number; description: string; unit: string }
+interface CompositionPriceJson {
   code: number
-  description: string
-  unit: string
-  stateCode: string
-  referenceMonth: string
-  isDesonerated: boolean
-  baseUnitCost: number
+  state_code: string
+  reference_month: string
+  is_desonerated: boolean
+  base_unit_cost: number
 }
-
-interface ParsedCompositionItem {
-  compositionCode: number
-  itemType: 'INPUT' | 'SUB_COMPOSITION'
-  code: number
+interface CompositionItemJson {
+  composition_code: number
+  item_type: 'INPUT' | 'SUB_COMPOSITION'
+  item_code: number
   description: string
   unit: string
   coefficient: string
+}
+
+interface CatalogStats { newCodes: number; unchanged: number; divergent: number }
+
+export interface RunReferenceImportArgs {
+  referenceDir: string
+}
+
+function loadJson<T>(filePath: string): T {
+  const raw = readFileSync(filePath, 'utf-8')
+  return JSON.parse(raw) as T
 }
 
 function normalizeForCompare(s: string | null | undefined): string {
   return String(s ?? '').trim().toUpperCase()
 }
 
-function parseInsumosSheet(
-  worksheet: XLSX.WorkSheet,
-  referenceMonth: string,
-  isDesonerated: boolean
-): ParsedItem[] {
-  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as unknown[][]
-  if (rows.length < 10) return []
-
-  const ufs = extractUFsFromRow3(rows[3] || [])
-  if (ufs.length === 0) {
-    console.warn('  No UFs found in row 3')
-    return []
-  }
-
-  const headerRow = findHeaderRow(rows, ['CODIGO', 'DESCRICAO'])
-  if (headerRow === -1) {
-    console.warn('  Header not found')
-    return []
-  }
-
-  const headers = rows[headerRow].map(normalizeHeader)
-  const codeIdx = headers.findIndex((h) => h.includes('CODIGO') && h.includes('INSUMO'))
-  const descIdx = headers.findIndex((h) => h.includes('DESCRICAO'))
-  const unitIdx = headers.findIndex((h) => h.includes('UNIDADE'))
-
-  if (codeIdx === -1 || descIdx === -1) {
-    console.warn('  Required columns not found')
-    return []
-  }
-
-  const ufIndices = ufs
-    .map((uf) => ({ uf, idx: headers.indexOf(uf) }))
-    .filter((x) => x.idx !== -1)
-
-  const result: ParsedItem[] = []
-
-  for (let i = headerRow + 1; i < rows.length; i++) {
-    const row = rows[i]
-    if (!row || !row[codeIdx]) continue
-
-    const code = Number(row[codeIdx])
-    if (isNaN(code) || code === 0) continue
-
-    const description = String(row[descIdx] ?? '').trim()
-    const unit = unitIdx !== -1 ? String(row[unitIdx] ?? '').trim().toUpperCase() : 'UN'
-
-    for (const { uf, idx } of ufIndices) {
-      const rawPrice = row[idx]
-      if (rawPrice === undefined || rawPrice === null || rawPrice === '') continue
-      if (rawPrice === '-') continue
-
-      const price = Math.round(Number(String(rawPrice).replace(',', '.')) * 100)
-      if (isNaN(price) || price === 0) continue
-
-      result.push({
-        code,
-        description,
-        unit,
-        stateCode: uf,
-        referenceMonth,
-        isDesonerated,
-        unitPrice: price,
-      })
-    }
-  }
-
-  return result
-}
-
-function buildCompositionCodeMap(worksheet: XLSX.WorkSheet): Map<string, number> {
-  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as unknown[][]
-  if (rows.length < 10) return new Map()
-
-  const headerRow = findHeaderRow(rows, ['CODIGO', 'TIPO'])
-  if (headerRow === -1) return new Map()
-
-  const headers = rows[headerRow].map(normalizeHeader)
-  const codCompIdx = headers.findIndex((h) => h.includes('CODIGO') && h.includes('COMPOSICAO'))
-  const tipoIdx = headers.findIndex((h) => h.includes('TIPO'))
-  const descIdx = headers.findIndex((h) => h.includes('DESCRICAO'))
-
-  if (codCompIdx === -1 || tipoIdx === -1 || descIdx === -1) return new Map()
-
-  const map = new Map<string, number>()
-
-  for (let i = headerRow + 1; i < rows.length; i++) {
-    const row = rows[i]
-    if (!row) continue
-
-    const compCode = row[codCompIdx]
-    if (compCode === undefined || compCode === null || compCode === '') continue
-
-    const parsedComp = Number(compCode)
-    if (isNaN(parsedComp) || parsedComp === 0) continue
-
-    // Parent rows have empty tipo; child rows have "COMPOSICAO" or "INSUMO"
-    const tipo = String(row[tipoIdx] ?? '').trim()
-    if (tipo !== '') continue
-
-    const description = String(row[descIdx] ?? '').trim().toUpperCase()
-    if (!description) continue
-
-    // Only set if not already present (first occurrence wins for duplicates)
-    if (!map.has(description)) {
-      map.set(description, parsedComp)
-    }
-  }
-
-  return map
-}
-
-function parseComposicoesSheet(
-  worksheet: XLSX.WorkSheet,
-  referenceMonth: string,
-  isDesonerated: boolean,
-  compositionCodeMap: Map<string, number>
-): ParsedComposition[] {
-  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as unknown[][]
-  if (rows.length < 10) return []
-
-  const ufs = extractUFsFromRow3(rows[3] || [])
-  if (ufs.length === 0) {
-    console.warn('  No UFs found in row 3')
-    return []
-  }
-
-  const headerRow = findHeaderRow(rows, ['CODIGO', 'COMPOSICAO'])
-  if (headerRow === -1) {
-    console.warn('  Header not found')
-    return []
-  }
-
-  const headers = rows[headerRow].map(normalizeHeader)
-  const descIdx = headers.findIndex((h) => h === 'DESCRICAO')
-  const unitIdx = headers.findIndex((h) => h.includes('UNIDADE'))
-
-  if (descIdx === -1) {
-    console.warn('  Required columns not found')
-    return []
-  }
-
-  // For compositions, UFs are in pairs: (Custo R$, %AS) for each UF
-  const ufCostIndices = ufs
-    .map((uf, ufPos) => {
-      const costIdx = 4 + ufPos * 2
-      return { uf, idx: costIdx }
-    })
-    .filter((x) => x.idx < headers.length)
-
-  const result: ParsedComposition[] = []
-  let matchedCount = 0
-  let unmatchedCount = 0
-
-  for (let i = headerRow + 1; i < rows.length; i++) {
-    const row = rows[i]
-    if (!row || !row[descIdx]) continue
-
-    const description = String(row[descIdx] ?? '').trim()
-    const normalizedDesc = description.toUpperCase()
-    const code = compositionCodeMap.get(normalizedDesc)
-
-    if (!code) {
-      unmatchedCount++
-      continue
-    }
-    matchedCount++
-
-    const unit = unitIdx !== -1 ? String(row[unitIdx] ?? '').trim().toUpperCase() : 'UN'
-
-    for (const { uf, idx } of ufCostIndices) {
-      const rawCost = row[idx]
-      if (rawCost === undefined || rawCost === null || rawCost === '') continue
-      if (rawCost === '-') continue
-
-      const cost = Math.round(Number(String(rawCost).replace(',', '.')) * 100)
-      if (isNaN(cost) || cost === 0) continue
-
-      result.push({
-        code,
-        description,
-        unit,
-        stateCode: uf,
-        referenceMonth,
-        isDesonerated,
-        baseUnitCost: cost,
-      })
-    }
-  }
-
-  console.log(`  Matched ${matchedCount} compositions by description, ${unmatchedCount} unmatched`)
-  return result
-}
-
-function parseAnaliticoSheet(worksheet: XLSX.WorkSheet): ParsedCompositionItem[] {
-  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as unknown[][]
-  if (rows.length < 10) return []
-
-  const headerRow = findHeaderRow(rows, ['CODIGO', 'TIPO'])
-  if (headerRow === -1) {
-    console.warn('  Header not found in Analítico')
-    return []
-  }
-
-  const headers = rows[headerRow].map(normalizeHeader)
-  const codCompIdx = headers.findIndex((h) => h.includes('CODIGO') && h.includes('COMPOSICAO'))
-  const tipoIdx = headers.findIndex((h) => h.includes('TIPO'))
-  const codItemIdx = headers.findIndex((h) => h.includes('CODIGO') && h.includes('ITEM'))
-  const descIdx = headers.findIndex((h) => h.includes('DESCRICAO'))
-  const unitIdx = headers.findIndex((h) => h.includes('UNIDADE'))
-  const coefIdx = headers.findIndex((h) => h.includes('COEFICIENTE'))
-
-  if (codCompIdx === -1 || tipoIdx === -1 || codItemIdx === -1 || coefIdx === -1) {
-    console.warn('  Required columns not found in Analítico')
-    return []
-  }
-
-  const result: ParsedCompositionItem[] = []
-  let currentCompositionCode: number | null = null
-
-  for (let i = headerRow + 1; i < rows.length; i++) {
-    const row = rows[i]
-    if (!row) continue
-
-    // Check if this row defines a parent composition
-    const compCode = row[codCompIdx]
-    if (compCode !== undefined && compCode !== null && compCode !== '') {
-      const parsedComp = Number(compCode)
-      if (!isNaN(parsedComp) && parsedComp !== 0) {
-        currentCompositionCode = parsedComp
-      }
-    }
-
-    if (currentCompositionCode === null) continue
-
-    const tipo = String(row[tipoIdx] ?? '').trim().toUpperCase()
-    if (!tipo || (!tipo.includes('INSUMO') && !tipo.includes('COMPOSICAO'))) continue
-
-    const itemCode = Number(row[codItemIdx])
-    if (isNaN(itemCode) || itemCode === 0) continue
-
-    const description = descIdx !== -1 ? String(row[descIdx] ?? '').trim() : ''
-    const unit = unitIdx !== -1 ? String(row[unitIdx] ?? '').trim().toUpperCase() : 'UN'
-    const coefficient = String(row[coefIdx] ?? '').replace(',', '.')
-
-    result.push({
-      compositionCode: currentCompositionCode,
-      itemType: tipo.includes('COMPOSICAO') ? 'SUB_COMPOSITION' : 'INPUT',
-      code: itemCode,
-      description,
-      unit,
-      coefficient,
-    })
-  }
-
-  return result
-}
-
-async function runInBatches<T>(
-  data: T[],
-  batchSize: number,
-  label: string,
-  runner: (batch: T[]) => Promise<void>
-) {
-  for (let i = 0; i < data.length; i += batchSize) {
-    const batch = data.slice(i, i + batchSize)
-    await runner(batch)
-    console.log(`  ${label}: ${Math.min(i + batchSize, data.length)}/${data.length}`)
+async function chunked<T>(rows: T[], size: number, fn: (batch: T[]) => Promise<void>) {
+  for (let i = 0; i < rows.length; i += size) {
+    await fn(rows.slice(i, i + size))
   }
 }
 
-interface CatalogStats {
-  newCodes: number
-  unchanged: number
-  divergent: number
-  divergenceSamples: number
-}
-
-interface PricesStats {
-  inserted: number
-}
-
-async function upsertItemCatalog(parsedItems: ParsedItem[]): Promise<CatalogStats> {
-  const stats: CatalogStats = { newCodes: 0, unchanged: 0, divergent: 0, divergenceSamples: 0 }
-  const MAX_DIVERGENCE_SAMPLES = 20
-
-  // Dedup by code — description/unit are stable across UFs/regimes per code
-  const byCode = new Map<number, { description: string; unit: string }>()
-  for (const p of parsedItems) {
-    if (!byCode.has(p.code)) {
-      byCode.set(p.code, { description: p.description, unit: p.unit })
-    }
-  }
-
-  const uniqueCodes = [...byCode.keys()]
-  if (uniqueCodes.length === 0) return stats
-
-  console.log(`  Upserting ${uniqueCodes.length} unique item codes...`)
-
-  // Pre-fetch current catalog rows for these codes to classify divergence
-  const currentRows = await db
+async function upsertItemCatalog(records: ItemCatalogJson[]): Promise<CatalogStats> {
+  const existing = await db
     .select({ code: itemCatalog.code, description: itemCatalog.description, unit: itemCatalog.unit })
     .from(itemCatalog)
-    .where(sql`${itemCatalog.code} IN ${uniqueCodes}`)
+  const existingMap = new Map(existing.map((r) => [r.code, { description: r.description, unit: r.unit }]))
 
-  const currentMap = new Map(currentRows.map((r) => [r.code, { description: r.description, unit: r.unit }]))
+  const stats: CatalogStats = { newCodes: 0, unchanged: 0, divergent: 0 }
 
-  for (const [code, incoming] of byCode) {
-    const existing = currentMap.get(code)
-    if (!existing) {
+  for (const r of records) {
+    const cur = existingMap.get(r.code)
+    if (!cur) {
       stats.newCodes++
-      continue
-    }
-    const descDiff = normalizeForCompare(existing.description) !== normalizeForCompare(incoming.description)
-    const unitDiff = normalizeForCompare(existing.unit) !== normalizeForCompare(incoming.unit)
-    if (descDiff || unitDiff) {
+    } else if (
+      normalizeForCompare(cur.description) !== normalizeForCompare(r.description) ||
+      normalizeForCompare(cur.unit) !== normalizeForCompare(r.unit)
+    ) {
       stats.divergent++
-      if (stats.divergenceSamples < MAX_DIVERGENCE_SAMPLES) {
-        if (descDiff) {
-          console.warn(
-            `[divergence] item_code=${code} description: "${existing.description}" -> "${incoming.description}"`
-          )
-        }
-        if (unitDiff) {
-          console.warn(`[divergence] item_code=${code} unit: "${existing.unit}" -> "${incoming.unit}"`)
-        }
-        stats.divergenceSamples++
-      }
+      console.warn(
+        `[divergence] item_code=${r.code} ` +
+        `description: "${cur.description}" -> "${r.description}" ; ` +
+        `unit: "${cur.unit}" -> "${r.unit}"`
+      )
     } else {
       stats.unchanged++
     }
   }
 
-  const rows = [...byCode.entries()].map(([code, v]) => ({
-    code,
-    description: v.description,
-    unit: v.unit,
-  }))
-
-  await runInBatches(rows, 500, 'item_catalog upsert', async (batch) => {
+  await chunked(records, 500, async (batch) => {
     await db
       .insert(itemCatalog)
-      .values(batch as any)
+      .values(batch.map((r) => ({ code: r.code, description: r.description, unit: r.unit })))
       .onConflictDoUpdate({
         target: itemCatalog.code,
         set: {
@@ -451,127 +124,78 @@ async function upsertItemCatalog(parsedItems: ParsedItem[]): Promise<CatalogStat
   return stats
 }
 
-async function insertItemPrices(parsedItems: ParsedItem[]): Promise<PricesStats> {
-  if (parsedItems.length === 0) return { inserted: 0 }
+async function upsertItemPrices(records: ItemPriceJson[]): Promise<number> {
+  const codes = [...new Set(records.map((r) => r.code))]
+  if (codes.length === 0) return 0
 
-  const codes = [...new Set(parsedItems.map((p) => p.code))]
   const catalogRows = await db
     .select({ id: itemCatalog.id, code: itemCatalog.code })
     .from(itemCatalog)
-    .where(sql`${itemCatalog.code} IN ${codes}`)
-
+    .where(sql`${itemCatalog.code} = ANY(${sql.raw(`ARRAY[${codes.join(',')}]::integer[]`)})`)
   const idByCode = new Map(catalogRows.map((r) => [r.code, r.id]))
 
-  // Dedup by (catalogId, stateCode, referenceMonth, isDesonerated) — Postgres rejects
-  // ON CONFLICT DO UPDATE when the same target row appears twice in one statement.
-  // Last occurrence wins (XLSX price is stable per (code, UF, regime, month)).
-  const dedup = new Map<string, {
-    catalogId: number
-    stateCode: string
-    referenceMonth: string
-    isDesonerated: boolean
-    unitPrice: number
-  }>()
+  let inserted = 0
+  await chunked(records, 500, async (batch) => {
+    const rows = batch
+      .map((r) => {
+        const catalogId = idByCode.get(r.code)
+        if (!catalogId) return null
+        return {
+          catalogId,
+          stateCode: r.state_code,
+          referenceMonth: r.reference_month,
+          isDesonerated: r.is_desonerated,
+          unitPrice: r.unit_price,
+        }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
 
-  for (const p of parsedItems) {
-    const catalogId = idByCode.get(p.code)
-    if (!catalogId) continue
-    const key = `${catalogId}:${p.stateCode}:${p.referenceMonth}:${p.isDesonerated ? 1 : 0}`
-    dedup.set(key, {
-      catalogId,
-      stateCode: p.stateCode,
-      referenceMonth: p.referenceMonth,
-      isDesonerated: p.isDesonerated,
-      unitPrice: p.unitPrice,
-    })
-  }
+    if (rows.length === 0) return
 
-  const rows = [...dedup.values()]
-
-  console.log(
-    `  Inserting ${rows.length} item_prices rows (catalog resolved: ${idByCode.size}/${codes.length}, deduped from ${parsedItems.length})...`
-  )
-
-  await runInBatches(rows, 500, 'item_prices upsert', async (batch) => {
     await db
       .insert(itemPrices)
-      .values(batch as any)
+      .values(rows)
       .onConflictDoUpdate({
         target: [itemPrices.catalogId, itemPrices.stateCode, itemPrices.referenceMonth, itemPrices.isDesonerated],
-        set: {
-          unitPrice: sql`EXCLUDED.unit_price`,
-        },
+        set: { unitPrice: sql`EXCLUDED.unit_price` },
       })
+    inserted += rows.length
   })
 
-  return { inserted: rows.length }
+  return inserted
 }
 
-async function upsertCompositionCatalog(parsedComps: ParsedComposition[]): Promise<CatalogStats> {
-  const stats: CatalogStats = { newCodes: 0, unchanged: 0, divergent: 0, divergenceSamples: 0 }
-  const MAX_DIVERGENCE_SAMPLES = 20
-
-  const byCode = new Map<number, { description: string; unit: string }>()
-  for (const p of parsedComps) {
-    if (!byCode.has(p.code)) {
-      byCode.set(p.code, { description: p.description, unit: p.unit })
-    }
-  }
-
-  const uniqueCodes = [...byCode.keys()]
-  if (uniqueCodes.length === 0) return stats
-
-  console.log(`  Upserting ${uniqueCodes.length} unique composition codes...`)
-
-  const currentRows = await db
-    .select({
-      code: compositionCatalog.code,
-      description: compositionCatalog.description,
-      unit: compositionCatalog.unit,
-    })
+async function upsertCompositionCatalog(records: CompositionCatalogJson[]): Promise<CatalogStats> {
+  const existing = await db
+    .select({ code: compositionCatalog.code, description: compositionCatalog.description, unit: compositionCatalog.unit })
     .from(compositionCatalog)
-    .where(sql`${compositionCatalog.code} IN ${uniqueCodes}`)
+  const existingMap = new Map(existing.map((r) => [r.code, { description: r.description, unit: r.unit }]))
 
-  const currentMap = new Map(currentRows.map((r) => [r.code, { description: r.description, unit: r.unit }]))
+  const stats: CatalogStats = { newCodes: 0, unchanged: 0, divergent: 0 }
 
-  for (const [code, incoming] of byCode) {
-    const existing = currentMap.get(code)
-    if (!existing) {
+  for (const r of records) {
+    const cur = existingMap.get(r.code)
+    if (!cur) {
       stats.newCodes++
-      continue
-    }
-    const descDiff = normalizeForCompare(existing.description) !== normalizeForCompare(incoming.description)
-    const unitDiff = normalizeForCompare(existing.unit) !== normalizeForCompare(incoming.unit)
-    if (descDiff || unitDiff) {
+    } else if (
+      normalizeForCompare(cur.description) !== normalizeForCompare(r.description) ||
+      normalizeForCompare(cur.unit) !== normalizeForCompare(r.unit)
+    ) {
       stats.divergent++
-      if (stats.divergenceSamples < MAX_DIVERGENCE_SAMPLES) {
-        if (descDiff) {
-          console.warn(
-            `[divergence] composition_code=${code} description: "${existing.description}" -> "${incoming.description}"`
-          )
-        }
-        if (unitDiff) {
-          console.warn(
-            `[divergence] composition_code=${code} unit: "${existing.unit}" -> "${incoming.unit}"`
-          )
-        }
-        stats.divergenceSamples++
-      }
+      console.warn(
+        `[divergence] composition_code=${r.code} ` +
+        `description: "${cur.description}" -> "${r.description}" ; ` +
+        `unit: "${cur.unit}" -> "${r.unit}"`
+      )
     } else {
       stats.unchanged++
     }
   }
 
-  const rows = [...byCode.entries()].map(([code, v]) => ({
-    code,
-    description: v.description,
-    unit: v.unit,
-  }))
-
-  await runInBatches(rows, 500, 'composition_catalog upsert', async (batch) => {
+  await chunked(records, 500, async (batch) => {
     await db
       .insert(compositionCatalog)
-      .values(batch as any)
+      .values(batch.map((r) => ({ code: r.code, description: r.description, unit: r.unit })))
       .onConflictDoUpdate({
         target: compositionCatalog.code,
         set: {
@@ -585,252 +209,143 @@ async function upsertCompositionCatalog(parsedComps: ParsedComposition[]): Promi
   return stats
 }
 
-async function insertCompositionPrices(parsedComps: ParsedComposition[]): Promise<PricesStats> {
-  if (parsedComps.length === 0) return { inserted: 0 }
+async function upsertCompositionPrices(records: CompositionPriceJson[]): Promise<number> {
+  const codes = [...new Set(records.map((r) => r.code))]
+  if (codes.length === 0) return 0
 
-  const codes = [...new Set(parsedComps.map((p) => p.code))]
   const catalogRows = await db
     .select({ id: compositionCatalog.id, code: compositionCatalog.code })
     .from(compositionCatalog)
-    .where(sql`${compositionCatalog.code} IN ${codes}`)
-
+    .where(sql`${compositionCatalog.code} = ANY(${sql.raw(`ARRAY[${codes.join(',')}]::integer[]`)})`)
   const idByCode = new Map(catalogRows.map((r) => [r.code, r.id]))
 
-  // Dedup — see note in insertItemPrices.
-  const dedup = new Map<string, {
-    catalogId: number
-    stateCode: string
-    referenceMonth: string
-    isDesonerated: boolean
-    baseUnitCost: number
-  }>()
+  let inserted = 0
+  await chunked(records, 500, async (batch) => {
+    const rows = batch
+      .map((r) => {
+        const catalogId = idByCode.get(r.code)
+        if (!catalogId) return null
+        return {
+          catalogId,
+          stateCode: r.state_code,
+          referenceMonth: r.reference_month,
+          isDesonerated: r.is_desonerated,
+          baseUnitCost: r.base_unit_cost,
+        }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
 
-  for (const p of parsedComps) {
-    const catalogId = idByCode.get(p.code)
-    if (!catalogId) continue
-    const key = `${catalogId}:${p.stateCode}:${p.referenceMonth}:${p.isDesonerated ? 1 : 0}`
-    dedup.set(key, {
-      catalogId,
-      stateCode: p.stateCode,
-      referenceMonth: p.referenceMonth,
-      isDesonerated: p.isDesonerated,
-      baseUnitCost: p.baseUnitCost,
-    })
-  }
+    if (rows.length === 0) return
 
-  const rows = [...dedup.values()]
-
-  console.log(
-    `  Inserting ${rows.length} composition_prices rows (catalog resolved: ${idByCode.size}/${codes.length}, deduped from ${parsedComps.length})...`
-  )
-
-  await runInBatches(rows, 500, 'composition_prices upsert', async (batch) => {
     await db
       .insert(compositionPrices)
-      .values(batch as any)
+      .values(rows)
       .onConflictDoUpdate({
-        target: [
-          compositionPrices.catalogId,
-          compositionPrices.stateCode,
-          compositionPrices.referenceMonth,
-          compositionPrices.isDesonerated,
-        ],
-        set: {
-          baseUnitCost: sql`EXCLUDED.base_unit_cost`,
-        },
+        target: [compositionPrices.catalogId, compositionPrices.stateCode, compositionPrices.referenceMonth, compositionPrices.isDesonerated],
+        set: { baseUnitCost: sql`EXCLUDED.base_unit_cost` },
       })
+    inserted += rows.length
   })
 
-  return { inserted: rows.length }
+  return inserted
 }
 
-async function upsertCompositionItems(parsedItems: ParsedCompositionItem[]): Promise<number> {
-  if (parsedItems.length === 0) return 0
+async function upsertCompositionItems(records: CompositionItemJson[]): Promise<number> {
+  const compCodes = [...new Set(records.map((r) => r.composition_code))]
+  if (compCodes.length === 0) return 0
 
-  const compCodes = [...new Set(parsedItems.map((p) => p.compositionCode))]
   const catalogRows = await db
     .select({ id: compositionCatalog.id, code: compositionCatalog.code })
     .from(compositionCatalog)
-    .where(sql`${compositionCatalog.code} IN ${compCodes}`)
-
+    .where(sql`${compositionCatalog.code} = ANY(${sql.raw(`ARRAY[${compCodes.join(',')}]::integer[]`)})`)
   const idByCode = new Map(catalogRows.map((r) => [r.code, r.id]))
-  console.log(`  Resolved ${idByCode.size}/${compCodes.length} composition IDs`)
 
-  // Dedup by (compositionId, itemType, itemCode) — coefficients are national, first wins
-  const seen = new Set<string>()
-  const rows: Array<{
-    compositionId: number
-    itemType: string
-    itemCode: number
-    description: string
-    unit: string
-    resourceType: string | null
-    coefficient: string
-  }> = []
+  let inserted = 0
+  await chunked(records, 500, async (batch) => {
+    const rows = batch
+      .map((r) => {
+        const compositionId = idByCode.get(r.composition_code)
+        if (!compositionId) return null
+        return {
+          compositionId,
+          itemType: r.item_type,
+          itemCode: r.item_code,
+          description: r.description,
+          unit: r.unit,
+          resourceType: null as string | null,
+          coefficient: r.coefficient,
+        }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
 
-  for (const ci of parsedItems) {
-    const compositionId = idByCode.get(ci.compositionCode)
-    if (!compositionId) continue
-    const key = `${compositionId}:${ci.itemType}:${ci.code}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    rows.push({
-      compositionId,
-      itemType: ci.itemType,
-      itemCode: ci.code,
-      description: ci.description,
-      unit: ci.unit,
-      resourceType: null,
-      coefficient: ci.coefficient,
-    })
-  }
+    if (rows.length === 0) return
 
-  console.log(`  Deduped to ${rows.length} unique composition_items rows`)
-
-  await runInBatches(rows, 500, 'composition_items upsert', async (batch) => {
-    await db.insert(compositionItems).values(batch as any).onConflictDoNothing()
+    await db.insert(compositionItems).values(rows).onConflictDoNothing()
+    inserted += rows.length
   })
 
-  return rows.length
+  return inserted
 }
 
-export async function runSinapiImport({ referenceMonth, filePath: rawPath }: RunSinapiImportArgs) {
-  const filePath = resolve(rawPath)
+export async function runReferenceImport({ referenceDir }: RunReferenceImportArgs) {
+  const dir = resolve(referenceDir)
+  console.log(`Reading reference bundle from: ${dir}`)
 
-  console.log(`Reading SINAPI file: ${filePath}`)
-  console.log(`Reference month: ${referenceMonth}`)
-
-  const workbook = XLSX.readFile(filePath)
-  console.log(`Sheets found: ${workbook.SheetNames.join(', ')}`)
-
-  const allItems: ParsedItem[] = []
-  const allCompositions: ParsedComposition[] = []
-  const allCompositionItems: ParsedCompositionItem[] = []
-
-  // First, extract composition codes from Analítico (CSD/CCD has code=0 for all rows)
-  const analiticoName = workbook.SheetNames.find((n) =>
-    n.toUpperCase() === 'ANALÍTICO' || n.toUpperCase() === 'ANALITICO'
+  const metadata = loadJson<{ reference_month: string; generated_at?: string; source_file?: string }>(
+    join(dir, 'metadata.json')
   )
+  console.log(`  reference_month: ${metadata.reference_month}`)
+  if (metadata.generated_at) console.log(`  generated_at:    ${metadata.generated_at}`)
+  if (metadata.source_file) console.log(`  source_file:     ${metadata.source_file}`)
 
-  let compositionCodeMap = new Map<string, number>()
-  if (analiticoName) {
-    console.log(`Building composition code map from ${analiticoName}...`)
-    compositionCodeMap = buildCompositionCodeMap(workbook.Sheets[analiticoName])
-    console.log(`  -> ${compositionCodeMap.size} unique composition codes mapped`)
-  } else {
-    console.warn('Sheet Analítico not found — composition import will fail')
-  }
+  const itemsCat = loadJson<ItemCatalogJson[]>(join(dir, 'items_catalog.json'))
+  const itemsPx = loadJson<ItemPriceJson[]>(join(dir, 'items_prices.json'))
+  const compsCat = loadJson<CompositionCatalogJson[]>(join(dir, 'compositions_catalog.json'))
+  const compsPx = loadJson<CompositionPriceJson[]>(join(dir, 'compositions_prices.json'))
+  const compsItems = loadJson<CompositionItemJson[]>(join(dir, 'composition_items.json'))
 
-  // Parse insumos
-  const insumoSheets: Record<string, boolean> = {
-    'ISD': false,
-    'ICD': true,
-  }
+  console.log(`  -> items_catalog:        ${itemsCat.length}`)
+  console.log(`  -> items_prices:         ${itemsPx.length}`)
+  console.log(`  -> compositions_catalog: ${compsCat.length}`)
+  console.log(`  -> compositions_prices:  ${compsPx.length}`)
+  console.log(`  -> composition_items:    ${compsItems.length}`)
 
-  for (const [sheetPrefix, isDesonerated] of Object.entries(insumoSheets)) {
-    const sheetName = workbook.SheetNames.find((n) => n.toUpperCase() === sheetPrefix)
-    if (!sheetName) {
-      console.warn(`Sheet ${sheetPrefix} not found, skipping...`)
-      continue
-    }
-    console.log(`Parsing sheet: ${sheetName} (insumos, desonerated=${isDesonerated})...`)
-    const parsed = parseInsumosSheet(workbook.Sheets[sheetName], referenceMonth, isDesonerated)
-    console.log(`  -> ${parsed.length} records`)
-    allItems.push(...parsed)
-  }
-
-  // Parse composições
-  const composicaoSheets: Record<string, boolean> = {
-    'CSD': false,
-    'CCD': true,
-  }
-
-  for (const [sheetPrefix, isDesonerated] of Object.entries(composicaoSheets)) {
-    const sheetName = workbook.SheetNames.find((n) => n.toUpperCase() === sheetPrefix)
-    if (!sheetName) {
-      console.warn(`Sheet ${sheetPrefix} not found, skipping...`)
-      continue
-    }
-    console.log(`Parsing sheet: ${sheetName} (composições, desonerated=${isDesonerated})...`)
-    const parsed = parseComposicoesSheet(
-      workbook.Sheets[sheetName],
-      referenceMonth,
-      isDesonerated,
-      compositionCodeMap
-    )
-    console.log(`  -> ${parsed.length} records`)
-    allCompositions.push(...parsed)
-  }
-
-  // Parse analítico items
-  if (analiticoName) {
-    console.log(`Parsing sheet: ${analiticoName} (items)...`)
-    const parsed = parseAnaliticoSheet(workbook.Sheets[analiticoName])
-    console.log(`  -> ${parsed.length} records`)
-    allCompositionItems.push(...parsed)
-  }
-
-  console.log(`\nTotal items: ${allItems.length}`)
-  console.log(`Total compositions: ${allCompositions.length}`)
-  console.log(`Total composition items: ${allCompositionItems.length}`)
-
-  if (allItems.length === 0 && allCompositions.length === 0) {
-    console.warn('No data found to import. Exiting.')
-    process.exit(0)
-  }
-
-  // Write phase
-  let itemCatalogStats: CatalogStats = { newCodes: 0, unchanged: 0, divergent: 0, divergenceSamples: 0 }
-  let itemPricesStats: PricesStats = { inserted: 0 }
-  let compCatalogStats: CatalogStats = { newCodes: 0, unchanged: 0, divergent: 0, divergenceSamples: 0 }
-  let compPricesStats: PricesStats = { inserted: 0 }
-  let compItemsInserted = 0
-
-  if (allItems.length > 0) {
-    console.log('\n[1/5] item_catalog upsert...')
-    itemCatalogStats = await upsertItemCatalog(allItems)
-    console.log('\n[2/5] item_prices upsert...')
-    itemPricesStats = await insertItemPrices(allItems)
-  }
-
-  if (allCompositions.length > 0) {
-    console.log('\n[3/5] composition_catalog upsert...')
-    compCatalogStats = await upsertCompositionCatalog(allCompositions)
-    console.log('\n[4/5] composition_prices upsert...')
-    compPricesStats = await insertCompositionPrices(allCompositions)
-  }
-
-  if (allCompositionItems.length > 0) {
-    console.log('\n[5/5] composition_items upsert...')
-    compItemsInserted = await upsertCompositionItems(allCompositionItems)
-  }
+  console.log('\nUpserting item_catalog...')
+  const itemCatStats = await upsertItemCatalog(itemsCat)
+  console.log('Upserting item_prices...')
+  const itemPxInserted = await upsertItemPrices(itemsPx)
+  console.log('Upserting composition_catalog...')
+  const compCatStats = await upsertCompositionCatalog(compsCat)
+  console.log('Upserting composition_prices...')
+  const compPxInserted = await upsertCompositionPrices(compsPx)
+  console.log('Upserting composition_items...')
+  const compItemsInserted = await upsertCompositionItems(compsItems)
 
   console.log('')
-  console.log('=== Import complete ===')
-  console.log(`  Items — new codes:           ${itemCatalogStats.newCodes}`)
-  console.log(`  Items — updated (no change): ${itemCatalogStats.unchanged}`)
-  console.log(`  Items — updated (divergent): ${itemCatalogStats.divergent}`)
-  console.log(`  Items — prices inserted:     ${itemPricesStats.inserted}`)
-  console.log(`  Compositions — new codes:           ${compCatalogStats.newCodes}`)
-  console.log(`  Compositions — updated (no change): ${compCatalogStats.unchanged}`)
-  console.log(`  Compositions — updated (divergent): ${compCatalogStats.divergent}`)
-  console.log(`  Compositions — prices inserted:     ${compPricesStats.inserted}`)
-  console.log(`  Composition items inserted:         ${compItemsInserted}`)
+  console.log('=== Reference import complete ===')
+  console.log(`  Items — new codes:           ${itemCatStats.newCodes}`)
+  console.log(`  Items — updated (no change): ${itemCatStats.unchanged}`)
+  console.log(`  Items — updated (divergent): ${itemCatStats.divergent}`)
+  console.log(`  Items — prices upserted:     ${itemPxInserted}`)
+  console.log(`  Compositions — new codes:           ${compCatStats.newCodes}`)
+  console.log(`  Compositions — updated (no change): ${compCatStats.unchanged}`)
+  console.log(`  Compositions — updated (divergent): ${compCatStats.divergent}`)
+  console.log(`  Compositions — prices upserted:     ${compPxInserted}`)
+  console.log(`  Composition items upserted:         ${compItemsInserted}`)
 }
 
 if (import.meta.main) {
-  const SINAPI_REFERENCE_MONTH = process.argv[2]
-  const FILE_PATH = process.argv[3]
-
-  if (!SINAPI_REFERENCE_MONTH || !FILE_PATH) {
-    console.error('Usage: bun run src/db/import/sinapi.ts <YYYY-MM> <path-to-xlsx>')
+  const dir = process.argv[2]
+  if (!dir) {
+    console.error('Usage: bun run src/db/import/sinapi.ts <path-to-extractor-reference-dir>')
+    console.error('Example: bun run src/db/import/sinapi.ts ../sinapi-extractor/output/reference')
     process.exit(1)
   }
 
-  runSinapiImport({ referenceMonth: SINAPI_REFERENCE_MONTH, filePath: FILE_PATH })
+  runReferenceImport({ referenceDir: dir })
     .then(() => process.exit(0))
     .catch((err) => {
-      console.error('Import failed:', err)
+      console.error('Reference import failed:', err)
       process.exit(1)
     })
 }
