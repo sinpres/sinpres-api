@@ -16,7 +16,11 @@ export const ItemSchema = z.object({
   imageUrl: z.string().nullable(),
   metadata: z.any().nullable(),
   sourceUpdatedAt: z.string().nullable(),
-  previousCode: z.number().nullable(),
+  previousCode: z.number().nullable().openapi({
+    example: null,
+    description:
+      'Código anterior deste insumo quando houve substituição publicada pela Caixa. Null se o código é original. Use para migrar registros locais quando o SINAPI substitui um código por outro.',
+  }),
   createdAt: z.string(),
 })
 
