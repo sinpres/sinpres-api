@@ -23,6 +23,17 @@ describe('Compositions', () => {
       expect(body.data.length).toBeLessThanOrEqual(50)
     })
 
+    it('returns catalog-only compositions when state is omitted', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/compositions?limit=1')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.data).toHaveLength(1)
+      expect(body.data[0].stateCode).toBeNull()
+      expect(body.data[0].referenceMonth).toBeNull()
+      expect(body.data[0].isDesonerated).toBeNull()
+      expect(body.data[0].baseUnitCost).toBeNull()
+    })
+
     it('supports search query', async () => {
       const res = await app.request('/api/v1/sectors/civil-construction/compositions?search=alvenaria')
       expect(res.status).toBe(200)
@@ -89,6 +100,17 @@ describe('Compositions', () => {
       expect(pedreiro).toBeDefined()
       expect(pedreiro.unitPrice).toBe(2500)
       expect(pedreiro.totalPrice).toBe(3750)
+    })
+
+    it('returns catalog-only composition detail when state is omitted', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/compositions/1001')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.data.code).toBe(1001)
+      expect(body.data.stateCode).toBeNull()
+      expect(body.data.baseUnitCost).toBeNull()
+      expect(body.data.items).toHaveLength(2)
+      expect(body.data.items.every((item: any) => item.unitPrice === 0 && item.totalPrice === 0)).toBe(true)
     })
 
     it('returns 404 for unknown code', async () => {

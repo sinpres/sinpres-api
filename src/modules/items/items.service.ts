@@ -50,7 +50,6 @@ export async function getItems(schemaName: string, filter: ItemsFilter) {
   }
 
   const catalog = civilConstructionItemCatalog
-  const prices = civilConstructionItemPrices
   const conditions = []
 
   if (filter.unit) {
@@ -63,19 +62,82 @@ export async function getItems(schemaName: string, filter: ItemsFilter) {
     )
   }
 
-  if (filter.state) {
-    conditions.push(eq(prices.stateCode, filter.state.toUpperCase()))
+  const where = conditions.length > 0 ? and(...conditions) : undefined
+  const offset = (filter.page - 1) * filter.limit
+  const includeTotal = filter.include_total !== false
+  const queryLimit = includeTotal ? filter.limit : filter.limit + 1
+
+  if (!filter.state) {
+    const catalogQuery = db.select()
+      .from(catalog)
+      .where(where)
+      .limit(queryLimit)
+      .offset(offset)
+      .orderBy(asc(catalog.code))
+
+    const mapCatalogItem = (row: typeof catalog.$inferSelect) => {
+      const compactItem = {
+        id: row.id,
+        categoryId: row.categoryId,
+        code: row.code,
+        description: row.description,
+        unit: row.unit,
+        stateCode: null,
+        referenceMonth: null,
+        isDesonerated: null,
+        unitPrice: null,
+        previousCode: row.previousCode,
+      }
+
+      if (filter.compact) return compactItem
+
+      return {
+        ...compactItem,
+        technicalStandards: row.technicalStandards,
+        generalInfo: row.generalInfo,
+        imageUrl: row.imageUrl,
+        metadata: row.metadata,
+        sourceUpdatedAt: row.sourceUpdatedAt,
+        createdAt: row.createdAt,
+      }
+    }
+
+    if (!includeTotal) {
+      const rows = await catalogQuery
+      const hasNextPage = rows.length > filter.limit
+      return {
+        items: rows.slice(0, filter.limit).map(mapCatalogItem),
+        total: null,
+        hasNextPage,
+      }
+    }
+
+    const [rows, totalResult] = await Promise.all([
+      catalogQuery,
+      db.select({ total: count() }).from(catalog).where(where),
+    ])
+
+    return {
+      items: rows.map(mapCatalogItem),
+      total: totalResult[0].total,
+      hasNextPage: filter.page * filter.limit < totalResult[0].total,
+    }
   }
+
+  const prices = civilConstructionItemPrices
+  const priceConditions = [
+    ...conditions,
+    eq(prices.stateCode, filter.state.toUpperCase()),
+  ]
 
   const month = filter.month ?? (await getLatestReferenceMonth(filter.state)) ?? undefined
   if (month) {
-    conditions.push(eq(prices.referenceMonth, month))
+    priceConditions.push(eq(prices.referenceMonth, month))
   }
 
-  conditions.push(eq(prices.isDesonerated, filter.is_desonerated ?? false))
+  priceConditions.push(eq(prices.isDesonerated, filter.is_desonerated ?? false))
 
-  const where = conditions.length > 0 ? and(...conditions) : undefined
-  const offset = (filter.page - 1) * filter.limit
+  const priceWhere = and(...priceConditions)
 
   const compactSelection = {
     id: catalog.id,
@@ -109,13 +171,11 @@ export async function getItems(schemaName: string, filter: ItemsFilter) {
     createdAt: catalog.createdAt,
   }
   const selection = filter.compact ? compactSelection : fullSelection
-  const includeTotal = filter.include_total !== false
-  const queryLimit = includeTotal ? filter.limit : filter.limit + 1
 
   const itemsQuery = db.select(selection)
     .from(prices)
     .innerJoin(catalog, eq(prices.catalogId, catalog.id))
-    .where(where)
+    .where(priceWhere)
     .limit(queryLimit)
     .offset(offset)
     .orderBy(asc(catalog.code), asc(prices.stateCode))
@@ -131,7 +191,7 @@ export async function getItems(schemaName: string, filter: ItemsFilter) {
     db.select({ total: count() })
       .from(prices)
       .innerJoin(catalog, eq(prices.catalogId, catalog.id))
-      .where(where),
+      .where(priceWhere),
   ])
 
   return {
@@ -147,12 +207,33 @@ export async function getItemByCode(schemaName: string, code: number, filter: { 
   }
 
   const catalog = civilConstructionItemCatalog
-  const prices = civilConstructionItemPrices
-  const conditions = [eq(catalog.code, code)]
+  if (!filter.state) {
+    const result = await db.select().from(catalog).where(eq(catalog.code, code)).limit(1)
+    const item = result[0]
+    if (!item) return null
 
-  if (filter.state) {
-    conditions.push(eq(prices.stateCode, filter.state.toUpperCase()))
+    return {
+      id: item.id,
+      categoryId: item.categoryId,
+      code: item.code,
+      description: item.description,
+      unit: item.unit,
+      stateCode: null,
+      referenceMonth: null,
+      isDesonerated: null,
+      unitPrice: null,
+      technicalStandards: item.technicalStandards,
+      generalInfo: item.generalInfo,
+      imageUrl: item.imageUrl,
+      metadata: item.metadata,
+      sourceUpdatedAt: item.sourceUpdatedAt,
+      previousCode: item.previousCode,
+      createdAt: item.createdAt,
+    }
   }
+
+  const prices = civilConstructionItemPrices
+  const conditions = [eq(catalog.code, code), eq(prices.stateCode, filter.state.toUpperCase())]
 
   const month = filter.month ?? (await getLatestReferenceMonth(filter.state)) ?? undefined
   if (month) {

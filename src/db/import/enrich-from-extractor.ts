@@ -4,9 +4,8 @@
  * Reads a JSON file (default: ../sinapi-extractor/output/items.json) and updates
  * matching rows in civil_construction.item_catalog by natural code.
  *
- * Previously this updated the legacy `items` table, which meant one update per
- * (state × regime × month) tuple per code — ~40-54 rows touched per code.
- * With the dimensional schema, each update hits a single catalog row.
+ * Absolute image URLs are preserved so a stale enrich run does not replace public
+ * Vercel Blob URLs with relative extractor paths.
  */
 import { db } from '../client'
 import { itemCatalog } from '../schema/civil-construction'
@@ -31,16 +30,27 @@ export async function runExtractorEnrich(jsonPath: string) {
   const extractorItems: ExtractorItem[] = JSON.parse(raw)
   console.log(`  -> ${extractorItems.length} items in extractor output`)
 
+  const existingItems = await db.select({ code: itemCatalog.code, imageUrl: itemCatalog.imageUrl }).from(itemCatalog)
+  const currentImageByCode = new Map(existingItems.map((item) => [item.code, item.imageUrl]))
+
   let updated = 0
   let notFound = 0
+  let imageProtected = 0
 
   for (const item of extractorItems) {
+    const currentImageUrl = currentImageByCode.get(item.code) ?? null
+    const currentIsAbsolute = currentImageUrl?.startsWith('https://') ?? false
+    const nextImageUrl = currentIsAbsolute ? currentImageUrl : item.image || null
+    if (currentIsAbsolute && item.image && item.image !== currentImageUrl) {
+      imageProtected++
+    }
+
     const result = await db
       .update(itemCatalog)
       .set({
         technicalStandards: item.technical_standards || null,
         generalInfo: item.general_info || null,
-        imageUrl: item.image || null,
+        imageUrl: nextImageUrl,
         sourceUpdatedAt: (item.source_updated_at || null)?.slice(0, 20) || null,
         updatedAt: new Date(),
       })
@@ -54,13 +64,14 @@ export async function runExtractorEnrich(jsonPath: string) {
     }
 
     if ((updated + notFound) % 500 === 0) {
-      console.log(`  Progress: ${updated} rows updated, ${notFound} codes not found`)
+      console.log(`  Progress: ${updated} rows updated, ${notFound} codes not found, ${imageProtected} image URLs preserved`)
     }
   }
 
   console.log(`\nDone!`)
   console.log(`  Rows updated: ${updated}`)
   console.log(`  Codes not found in catalog: ${notFound}`)
+  console.log(`  Image URLs preserved: ${imageProtected}`)
 }
 
 if (import.meta.main) {

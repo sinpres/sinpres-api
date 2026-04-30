@@ -23,6 +23,17 @@ describe('Items', () => {
       expect(body.data.length).toBeLessThanOrEqual(50)
     })
 
+    it('returns catalog-only items when state is omitted', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/items?limit=1')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.data).toHaveLength(1)
+      expect(body.data[0].stateCode).toBeNull()
+      expect(body.data[0].referenceMonth).toBeNull()
+      expect(body.data[0].isDesonerated).toBeNull()
+      expect(body.data[0].unitPrice).toBeNull()
+    })
+
     it('supports search query', async () => {
       const res = await app.request('/api/v1/sectors/civil-construction/items?search=acetileno')
       expect(res.status).toBe(200)
@@ -76,6 +87,15 @@ describe('Items', () => {
       expect(res.status).toBe(200)
       const body = await res.json()
       expect(body.data.code).toBe(1)
+    })
+
+    it('returns catalog-only item by code when state is omitted', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/items/1')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.data.code).toBe(1)
+      expect(body.data.stateCode).toBeNull()
+      expect(body.data.unitPrice).toBeNull()
     })
 
     it('returns 404 for unknown code', async () => {

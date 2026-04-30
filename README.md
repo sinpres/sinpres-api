@@ -122,8 +122,8 @@ O endpoint de busca suporta **full-text search em português** (com stemming e n
 |---|---|---|---|
 | `search` | string | — | Termo de busca textual (ex: `tubo pvc`, `vergalhão`, `cimento`) |
 | `unit` | string | — | Filtro por unidade de medida (`KG`, `M`, `M2`, `M3`, `UN`, `L`, etc.) |
-| `state` | string | — | UF de 2 letras (ex: `SP`, `RJ`, `MG`) |
-| `month` | string | último disponível | Mês de referência no formato `AAAA-MM` |
+| `state` | string | — | UF de 2 letras (ex: `SP`, `RJ`, `MG`). Quando omitido, retorna catálogo nacional sem preço |
+| `month` | string | último disponível | Mês de referência no formato `AAAA-MM`; aplicado apenas quando `state` é informado |
 | `is_desonerated` | boolean | `false` | Regime tributário: `true` = desonerado, `false` = não desonerado |
 | `page` | number | `1` | Número da página |
 | `limit` | number | `50` | Itens por página (máx: `100`) |
@@ -142,6 +142,12 @@ curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items?search=
 
 ```bash
 curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items?unit=KG&month=2026-03&page=2"
+```
+
+**Navegar pelo catálogo nacional, sem preço regional:**
+
+```bash
+curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items?search=tubo+pvc&limit=10"
 ```
 
 **Listagem rápida sem contagem total e com payload compacto:**
@@ -215,8 +221,8 @@ Composições representam serviços completos de construção civil (ex: "Alvena
 |---|---|---|---|
 | `search` | string | — | Termo de busca textual (ex: `alvenaria`, `revestimento`) |
 | `unit` | string | — | Filtro por unidade de medida |
-| `state` | string | — | UF de 2 letras |
-| `month` | string | último disponível | Mês de referência no formato `AAAA-MM` |
+| `state` | string | — | UF de 2 letras. Quando omitido, retorna catálogo nacional sem custo regional |
+| `month` | string | último disponível | Mês de referência no formato `AAAA-MM`; aplicado apenas quando `state` é informado |
 | `is_desonerated` | boolean | `false` | Regime tributário |
 | `page` | number | `1` | Número da página |
 | `limit` | number | `50` | Itens por página (máx: `100`) |
@@ -229,6 +235,12 @@ Composições representam serviços completos de construção civil (ex: "Alvena
 
 ```bash
 curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/compositions?search=alvenaria&state=SP"
+```
+
+**Navegar pelo catálogo nacional de composições, sem custo regional:**
+
+```bash
+curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/compositions?search=alvenaria&limit=10"
 ```
 
 **Listagem rápida sem contagem total e com payload compacto:**
