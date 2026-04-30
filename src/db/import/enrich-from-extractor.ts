@@ -4,12 +4,8 @@
  * Reads a JSON file (default: ../sinapi-extractor/output/items.json) and updates
  * matching rows in civil_construction.item_catalog by natural code.
  *
- * IMAGE URL: the extractor JSON carries a relative path like "images/34.jpeg".
- * Once images are uploaded to a CDN/Blob (see upload-images-to-blob.ts) the catalog
- * holds an absolute https:// URL. We do NOT overwrite an absolute URL with a
- * relative path here — only fill the field when the catalog has no image_url yet,
- * or when both sides are relative paths. This guards against a stale enrich run
- * regressing the public CDN URLs and breaking image rendering on the explorer.
+ * Absolute image URLs are preserved so a stale enrich run does not replace public
+ * Vercel Blob URLs with relative extractor paths.
  */
 import { db } from '../client'
 import { itemCatalog } from '../schema/civil-construction'
@@ -34,22 +30,18 @@ export async function runExtractorEnrich(jsonPath: string) {
   const extractorItems: ExtractorItem[] = JSON.parse(raw)
   console.log(`  -> ${extractorItems.length} items in extractor output`)
 
-  // Pre-fetch current image_url values so we can decide whether to overwrite them
-  const existing = await db.select({ code: itemCatalog.code, imageUrl: itemCatalog.imageUrl }).from(itemCatalog)
-  const currentImageByCode = new Map(existing.map((r) => [r.code, r.imageUrl]))
+  const existingItems = await db.select({ code: itemCatalog.code, imageUrl: itemCatalog.imageUrl }).from(itemCatalog)
+  const currentImageByCode = new Map(existingItems.map((item) => [item.code, item.imageUrl]))
 
   let updated = 0
   let notFound = 0
   let imageProtected = 0
 
   for (const item of extractorItems) {
-    const newRelativeImage = item.image || null
-    const currentUrl = currentImageByCode.get(item.code) ?? null
-    const currentIsAbsolute = currentUrl?.startsWith('https://') ?? false
-
-    // Keep absolute (CDN) URLs intact; only fill if catalog has no URL or also relative.
-    const nextImageUrl = currentIsAbsolute ? currentUrl : newRelativeImage
-    if (currentIsAbsolute && newRelativeImage && newRelativeImage !== currentUrl) {
+    const currentImageUrl = currentImageByCode.get(item.code) ?? null
+    const currentIsAbsolute = currentImageUrl?.startsWith('https://') ?? false
+    const nextImageUrl = currentIsAbsolute ? currentImageUrl : item.image || null
+    if (currentIsAbsolute && item.image && item.image !== currentImageUrl) {
       imageProtected++
     }
 
@@ -77,9 +69,9 @@ export async function runExtractorEnrich(jsonPath: string) {
   }
 
   console.log(`\nDone!`)
-  console.log(`  Rows updated:         ${updated}`)
-  console.log(`  Codes not found:      ${notFound}`)
-  console.log(`  Image URLs preserved: ${imageProtected} (absolute CDN URLs not overwritten by relative paths)`)
+  console.log(`  Rows updated: ${updated}`)
+  console.log(`  Codes not found in catalog: ${notFound}`)
+  console.log(`  Image URLs preserved: ${imageProtected}`)
 }
 
 if (import.meta.main) {

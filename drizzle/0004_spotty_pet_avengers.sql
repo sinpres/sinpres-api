@@ -1,0 +1,2 @@
+CREATE INDEX "composition_prices_coordinate_catalog_idx" ON "civil_construction"."composition_prices" USING btree ("state_code","reference_month","is_desonerated","catalog_id");--> statement-breakpoint
+CREATE INDEX "item_prices_coordinate_catalog_idx" ON "civil_construction"."item_prices" USING btree ("state_code","reference_month","is_desonerated","catalog_id");

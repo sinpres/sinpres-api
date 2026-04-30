@@ -2,6 +2,9 @@ import { db } from '../../db/client'
 import { civilConstructionItemCatalog, civilConstructionItemPrices } from '../../db/schema'
 import { eq, sql, and, count, desc, asc } from 'drizzle-orm'
 import type { PaginationQuery } from '../../shared/pagination'
+import { remember } from '../../shared/memory-cache'
+
+const METADATA_CACHE_TTL_MS = 5 * 60 * 1000
 
 interface ItemsFilter extends PaginationQuery {
   search?: string
@@ -9,99 +12,147 @@ interface ItemsFilter extends PaginationQuery {
   state?: string
   month?: string
   is_desonerated?: boolean
+  compact?: boolean
+}
+
+interface ItemBulkQuery {
+  code: string
+  state: string
+  month: string
+  is_desonerated: boolean
 }
 
 export async function getLatestReferenceMonth(state?: string): Promise<string | null> {
-  const prices = civilConstructionItemPrices
-  const conditions = []
-  if (state) {
-    conditions.push(eq(prices.stateCode, state.toUpperCase()))
-  }
-  const where = conditions.length > 0 ? and(...conditions) : undefined
+  const normalizedState = state?.toUpperCase()
 
-  const result = await db
-    .select({ referenceMonth: prices.referenceMonth })
-    .from(prices)
-    .where(where)
-    .orderBy(desc(prices.referenceMonth))
-    .limit(1)
+  return remember(`items:latest-reference-month:${normalizedState ?? '*'}`, METADATA_CACHE_TTL_MS, async () => {
+    const prices = civilConstructionItemPrices
+    const conditions = []
+    if (normalizedState) {
+      conditions.push(eq(prices.stateCode, normalizedState))
+    }
+    const where = conditions.length > 0 ? and(...conditions) : undefined
 
-  return result[0]?.referenceMonth ?? null
+    const result = await db
+      .select({ referenceMonth: prices.referenceMonth })
+      .from(prices)
+      .where(where)
+      .orderBy(desc(prices.referenceMonth))
+      .limit(1)
+
+    return result[0]?.referenceMonth ?? null
+  })
 }
 
-/**
- * Returns paginated items.
- * - When `state` is provided: joins with prices and returns one row per (code, state, month, regime).
- * - When `state` is omitted: returns the catalog only — one row per code, with stateCode/unitPrice null.
- *   This is the "national browsing" mode used by the public explorer.
- */
 export async function getItems(schemaName: string, filter: ItemsFilter) {
   if (schemaName !== 'civil_construction') {
     return { items: [], total: 0 }
   }
 
   const catalog = civilConstructionItemCatalog
-
-  // National mode — catalog only, no JOIN with prices
-  if (!filter.state) {
-    const conditions = []
-    if (filter.unit) conditions.push(eq(catalog.unit, filter.unit.toUpperCase()))
-    if (filter.search) {
-      conditions.push(
-        sql`to_tsvector('portuguese', ${catalog.description} || ' ' || coalesce(${catalog.generalInfo}, '')) @@ plainto_tsquery('portuguese', ${filter.search})`
-      )
-    }
-    const where = conditions.length > 0 ? and(...conditions) : undefined
-    const offset = (filter.page - 1) * filter.limit
-
-    const [rows, totalResult] = await Promise.all([
-      db.select().from(catalog).where(where).limit(filter.limit).offset(offset).orderBy(asc(catalog.code)),
-      db.select({ total: count() }).from(catalog).where(where),
-    ])
-
-    const items = rows.map((r) => ({
-      id: r.id,
-      categoryId: r.categoryId,
-      code: r.code,
-      description: r.description,
-      unit: r.unit,
-      stateCode: null as string | null,
-      referenceMonth: null as string | null,
-      isDesonerated: null as boolean | null,
-      unitPrice: null as number | null,
-      technicalStandards: r.technicalStandards,
-      generalInfo: r.generalInfo,
-      imageUrl: r.imageUrl,
-      metadata: r.metadata,
-      sourceUpdatedAt: r.sourceUpdatedAt,
-      previousCode: r.previousCode,
-      createdAt: r.createdAt,
-    }))
-
-    return { items, total: totalResult[0].total }
-  }
-
-  // State-filtered mode — JOIN with prices
-  const prices = civilConstructionItemPrices
   const conditions = []
 
-  if (filter.unit) conditions.push(eq(catalog.unit, filter.unit.toUpperCase()))
+  if (filter.unit) {
+    conditions.push(eq(catalog.unit, filter.unit.toUpperCase()))
+  }
+
   if (filter.search) {
     conditions.push(
       sql`to_tsvector('portuguese', ${catalog.description} || ' ' || coalesce(${catalog.generalInfo}, '')) @@ plainto_tsquery('portuguese', ${filter.search})`
     )
   }
-  conditions.push(eq(prices.stateCode, filter.state.toUpperCase()))
+
+  const where = conditions.length > 0 ? and(...conditions) : undefined
+  const offset = (filter.page - 1) * filter.limit
+  const includeTotal = filter.include_total !== false
+  const queryLimit = includeTotal ? filter.limit : filter.limit + 1
+
+  if (!filter.state) {
+    const catalogQuery = db.select()
+      .from(catalog)
+      .where(where)
+      .limit(queryLimit)
+      .offset(offset)
+      .orderBy(asc(catalog.code))
+
+    const mapCatalogItem = (row: typeof catalog.$inferSelect) => {
+      const compactItem = {
+        id: row.id,
+        categoryId: row.categoryId,
+        code: row.code,
+        description: row.description,
+        unit: row.unit,
+        stateCode: null,
+        referenceMonth: null,
+        isDesonerated: null,
+        unitPrice: null,
+        previousCode: row.previousCode,
+      }
+
+      if (filter.compact) return compactItem
+
+      return {
+        ...compactItem,
+        technicalStandards: row.technicalStandards,
+        generalInfo: row.generalInfo,
+        imageUrl: row.imageUrl,
+        metadata: row.metadata,
+        sourceUpdatedAt: row.sourceUpdatedAt,
+        createdAt: row.createdAt,
+      }
+    }
+
+    if (!includeTotal) {
+      const rows = await catalogQuery
+      const hasNextPage = rows.length > filter.limit
+      return {
+        items: rows.slice(0, filter.limit).map(mapCatalogItem),
+        total: null,
+        hasNextPage,
+      }
+    }
+
+    const [rows, totalResult] = await Promise.all([
+      catalogQuery,
+      db.select({ total: count() }).from(catalog).where(where),
+    ])
+
+    return {
+      items: rows.map(mapCatalogItem),
+      total: totalResult[0].total,
+      hasNextPage: filter.page * filter.limit < totalResult[0].total,
+    }
+  }
+
+  const prices = civilConstructionItemPrices
+  const priceConditions = [
+    ...conditions,
+    eq(prices.stateCode, filter.state.toUpperCase()),
+  ]
 
   const month = filter.month ?? (await getLatestReferenceMonth(filter.state)) ?? undefined
-  if (month) conditions.push(eq(prices.referenceMonth, month))
+  if (month) {
+    priceConditions.push(eq(prices.referenceMonth, month))
+  }
 
-  conditions.push(eq(prices.isDesonerated, filter.is_desonerated ?? false))
+  priceConditions.push(eq(prices.isDesonerated, filter.is_desonerated ?? false))
 
-  const where = and(...conditions)
-  const offset = (filter.page - 1) * filter.limit
+  const priceWhere = and(...priceConditions)
 
-  const selection = {
+  const compactSelection = {
+    id: catalog.id,
+    categoryId: catalog.categoryId,
+    code: catalog.code,
+    description: catalog.description,
+    unit: catalog.unit,
+    stateCode: prices.stateCode,
+    referenceMonth: prices.referenceMonth,
+    isDesonerated: prices.isDesonerated,
+    unitPrice: prices.unitPrice,
+    previousCode: catalog.previousCode,
+  }
+
+  const fullSelection = {
     id: catalog.id,
     categoryId: catalog.categoryId,
     code: catalog.code,
@@ -119,53 +170,65 @@ export async function getItems(schemaName: string, filter: ItemsFilter) {
     previousCode: catalog.previousCode,
     createdAt: catalog.createdAt,
   }
+  const selection = filter.compact ? compactSelection : fullSelection
+
+  const itemsQuery = db.select(selection)
+    .from(prices)
+    .innerJoin(catalog, eq(prices.catalogId, catalog.id))
+    .where(priceWhere)
+    .limit(queryLimit)
+    .offset(offset)
+    .orderBy(asc(catalog.code), asc(prices.stateCode))
+
+  if (!includeTotal) {
+    const rows = await itemsQuery
+    const hasNextPage = rows.length > filter.limit
+    return { items: rows.slice(0, filter.limit), total: null, hasNextPage }
+  }
 
   const [items, totalResult] = await Promise.all([
-    db.select(selection)
-      .from(prices)
-      .innerJoin(catalog, eq(prices.catalogId, catalog.id))
-      .where(where)
-      .limit(filter.limit)
-      .offset(offset)
-      .orderBy(asc(catalog.code)),
+    itemsQuery,
     db.select({ total: count() })
       .from(prices)
       .innerJoin(catalog, eq(prices.catalogId, catalog.id))
-      .where(where),
+      .where(priceWhere),
   ])
 
-  return { items, total: totalResult[0].total }
+  return {
+    items,
+    total: totalResult[0].total,
+    hasNextPage: filter.page * filter.limit < totalResult[0].total,
+  }
 }
 
-export async function getItemByCode(schemaName: string, code: number, filter: { state?: string; month?: string; is_desonerated?: 'true' | 'false' }) {
+export async function getItemByCode(schemaName: string, code: number, filter: { state?: string; month?: string; is_desonerated?: boolean }) {
   if (schemaName !== 'civil_construction') {
     return null
   }
 
   const catalog = civilConstructionItemCatalog
-
-  // No state filter -> return catalog row only, no price
   if (!filter.state) {
     const result = await db.select().from(catalog).where(eq(catalog.code, code)).limit(1)
-    const r = result[0]
-    if (!r) return null
+    const item = result[0]
+    if (!item) return null
+
     return {
-      id: r.id,
-      categoryId: r.categoryId,
-      code: r.code,
-      description: r.description,
-      unit: r.unit,
-      stateCode: null as string | null,
-      referenceMonth: null as string | null,
-      isDesonerated: null as boolean | null,
-      unitPrice: null as number | null,
-      technicalStandards: r.technicalStandards,
-      generalInfo: r.generalInfo,
-      imageUrl: r.imageUrl,
-      metadata: r.metadata,
-      sourceUpdatedAt: r.sourceUpdatedAt,
-      previousCode: r.previousCode,
-      createdAt: r.createdAt,
+      id: item.id,
+      categoryId: item.categoryId,
+      code: item.code,
+      description: item.description,
+      unit: item.unit,
+      stateCode: null,
+      referenceMonth: null,
+      isDesonerated: null,
+      unitPrice: null,
+      technicalStandards: item.technicalStandards,
+      generalInfo: item.generalInfo,
+      imageUrl: item.imageUrl,
+      metadata: item.metadata,
+      sourceUpdatedAt: item.sourceUpdatedAt,
+      previousCode: item.previousCode,
+      createdAt: item.createdAt,
     }
   }
 
@@ -173,7 +236,9 @@ export async function getItemByCode(schemaName: string, code: number, filter: { 
   const conditions = [eq(catalog.code, code), eq(prices.stateCode, filter.state.toUpperCase())]
 
   const month = filter.month ?? (await getLatestReferenceMonth(filter.state)) ?? undefined
-  if (month) conditions.push(eq(prices.referenceMonth, month))
+  if (month) {
+    conditions.push(eq(prices.referenceMonth, month))
+  }
 
   conditions.push(eq(prices.isDesonerated, filter.is_desonerated ?? false))
 
@@ -202,8 +267,152 @@ export async function getItemByCode(schemaName: string, code: number, filter: { 
     .from(prices)
     .innerJoin(catalog, eq(prices.catalogId, catalog.id))
     .where(where)
-    .orderBy(desc(prices.referenceMonth))
+    .orderBy(desc(prices.referenceMonth), asc(prices.stateCode))
     .limit(1)
 
   return result[0] ?? null
+}
+
+export async function getItemsBulk(schemaName: string, queries: ItemBulkQuery[]) {
+  if (schemaName !== 'civil_construction') {
+    return queries.map((query) => ({
+      code: query.code,
+      found: false,
+      reason: 'no_price_for_coordinate' as const,
+    }))
+  }
+
+  if (queries.length === 0) {
+    return []
+  }
+
+  const normalizedQueries = queries.map((query) => ({
+    originalCode: query.code,
+    code: Number(query.code),
+    state: query.state.toUpperCase(),
+    month: query.month,
+    isDesonerated: query.is_desonerated,
+  }))
+
+  const uniqueQueries = Array.from(
+    new Map(
+      normalizedQueries.map((query) => [
+        `${query.code}|${query.state}|${query.month}|${query.isDesonerated}`,
+        query,
+      ])
+    ).values()
+  )
+
+  const values = uniqueQueries.map((query) => sql`(
+    ${query.code}::integer,
+    ${query.state}::varchar(2),
+    ${query.month}::varchar(7),
+    ${query.isDesonerated}::boolean
+  )`)
+
+  const raw = await db.execute<{
+    id: number
+    category_id: number | null
+    code: number
+    description: string
+    unit: string
+    state_code: string
+    reference_month: string
+    is_desonerated: boolean
+    unit_price: number
+    technical_standards: string | null
+    general_info: string | null
+    image_url: string | null
+    metadata: unknown | null
+    source_updated_at: string | null
+    previous_code: number | null
+    created_at: Date | string
+  }>(sql`
+    WITH requested(code, state_code, reference_month, is_desonerated) AS (
+      VALUES ${sql.join(values, sql`, `)}
+    )
+    SELECT
+      catalog.id,
+      catalog.category_id,
+      catalog.code,
+      catalog.description,
+      catalog.unit,
+      prices.state_code,
+      prices.reference_month,
+      prices.is_desonerated,
+      prices.unit_price,
+      catalog.technical_standards,
+      catalog.general_info,
+      catalog.image_url,
+      catalog.metadata,
+      catalog.source_updated_at,
+      catalog.previous_code,
+      catalog.created_at
+    FROM requested
+    INNER JOIN civil_construction.item_catalog catalog
+      ON catalog.code = requested.code
+    INNER JOIN civil_construction.item_prices prices
+      ON prices.catalog_id = catalog.id
+     AND prices.state_code = requested.state_code
+     AND prices.reference_month = requested.reference_month
+     AND prices.is_desonerated = requested.is_desonerated
+  `)
+
+  const rows = ((raw as unknown as { rows?: unknown[] }).rows ?? (raw as unknown as unknown[])) as Array<{
+    id: number
+    category_id: number | null
+    code: number
+    description: string
+    unit: string
+    state_code: string
+    reference_month: string
+    is_desonerated: boolean
+    unit_price: number
+    technical_standards: string | null
+    general_info: string | null
+    image_url: string | null
+    metadata: unknown | null
+    source_updated_at: string | null
+    previous_code: number | null
+    created_at: Date | string
+  }>
+
+  const itemByCoordinate = new Map(rows.map((row) => [
+    `${row.code}|${row.state_code}|${row.reference_month}|${row.is_desonerated}`,
+    {
+      id: row.id,
+      categoryId: row.category_id,
+      code: row.code,
+      description: row.description,
+      unit: row.unit,
+      stateCode: row.state_code,
+      referenceMonth: row.reference_month,
+      isDesonerated: row.is_desonerated,
+      unitPrice: row.unit_price,
+      technicalStandards: row.technical_standards,
+      generalInfo: row.general_info,
+      imageUrl: row.image_url,
+      metadata: row.metadata,
+      sourceUpdatedAt: row.source_updated_at,
+      previousCode: row.previous_code,
+      createdAt: row.created_at,
+    },
+  ]))
+
+  return normalizedQueries.map((query) => {
+    const item = itemByCoordinate.get(`${query.code}|${query.state}|${query.month}|${query.isDesonerated}`)
+    if (!item) {
+      return {
+        code: query.originalCode,
+        found: false,
+        reason: 'no_price_for_coordinate' as const,
+      }
+    }
+
+    return {
+      code: query.originalCode,
+      found: true,
+      item,
+    }
+  })
 }

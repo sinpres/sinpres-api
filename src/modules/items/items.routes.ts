@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
 import { z } from 'zod'
-import { ItemsResponseSchema, ItemResponseSchema, ItemsQuerySchema, ItemDetailQuerySchema } from './items.schema'
-import { getItems, getItemByCode } from './items.service'
+import { ItemsResponseSchema, ItemResponseSchema, ItemsQuerySchema, ItemDetailQuerySchema, ItemsBulkRequestSchema, ItemsBulkResponseSchema } from './items.schema'
+import { getItems, getItemByCode, getItemsBulk } from './items.service'
 import { getSectorBySlug } from '../sectors/sectors.service'
 import { notFound } from '../../shared/errors'
 import { paginationMeta } from '../../shared/pagination'
@@ -24,7 +24,9 @@ const listRoute = createRoute({
 
 **Regime tributário:** Use o parâmetro \`is_desonerated\` para filtrar por desoneração. Default: \`false\`.
 
-**Paginação:** Use \`page\` e \`limit\` para controlar a paginação. Máximo de 100 itens por página.`,
+**Paginação:** Use \`page\` e \`limit\` para controlar a paginação. Máximo de 100 itens por página.
+
+**Performance:** Use \`include_total=false\` para evitar \`COUNT(*)\` e \`compact=true\` para retornar payload reduzido.`,
   request: {
     params: z.object({ slug: z.string().openapi({ example: 'civil-construction' }) }),
     query: ItemsQuerySchema,
@@ -66,6 +68,38 @@ const getRoute = createRoute({
   },
 })
 
+const bulkRoute = createRoute({
+  method: 'post',
+  path: '/api/v1/sectors/{slug}/items/bulk',
+  tags: ['Items'],
+  summary: 'Buscar múltiplos insumos por código',
+  description: 'Retorna múltiplos insumos em uma única request, preservando a ordem de entrada e evitando N+1 no consumidor. Limite máximo de 100 consultas por request.',
+  request: {
+    params: z.object({ slug: z.string().openapi({ example: 'civil-construction' }) }),
+    body: {
+      content: {
+        'application/json': {
+          schema: ItemsBulkRequestSchema,
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: ItemsBulkResponseSchema } },
+      description: 'Resultados dos insumos solicitados',
+    },
+    400: {
+      content: { 'application/json': { schema: z.object({ error: z.string() }) } },
+      description: 'Payload inválido ou acima do limite de 100 consultas',
+    },
+    404: {
+      content: { 'application/json': { schema: z.object({ error: z.string() }) } },
+      description: 'Setor não encontrado',
+    },
+  },
+})
+
 itemsApp.openapi(listRoute, async (c) => {
   const { slug } = c.req.valid('param')
   const query = c.req.valid('query')
@@ -73,8 +107,8 @@ itemsApp.openapi(listRoute, async (c) => {
   const sector = await getSectorBySlug(slug)
   if (!sector) return notFound(c, 'Sector not found')
 
-  const { items, total } = await getItems(sector.schemaName, query)
-  const meta = paginationMeta(total, query.page, query.limit)
+  const { items, total, hasNextPage } = await getItems(sector.schemaName, query)
+  const meta = paginationMeta(total, query.page, query.limit, hasNextPage)
 
   return c.json({ data: items, meta }, 200)
 })
@@ -90,4 +124,16 @@ itemsApp.openapi(getRoute, async (c) => {
   if (!item) return notFound(c, 'Item not found')
 
   return c.json({ data: item }, 200)
+})
+
+itemsApp.openapi(bulkRoute, async (c) => {
+  const { slug } = c.req.valid('param')
+  const body = c.req.valid('json')
+
+  const sector = await getSectorBySlug(slug)
+  if (!sector) return notFound(c, 'Sector not found')
+
+  const results = await getItemsBulk(sector.schemaName, body.queries)
+
+  return c.json({ results }, 200)
 })

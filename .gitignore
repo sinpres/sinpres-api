@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .env
+.env.local
+.env*.local
 .DS_Store
 public/images/
 docs/
@@ -17,4 +19,3 @@ api.log
 input/*
 !input/.gitkeep
 !input/README.md
-.env*.local

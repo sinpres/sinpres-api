@@ -1,16 +1,27 @@
-import { db } from '../src/db/client'
-import { sectors } from '../src/db/schema/public'
-import {
-  itemCatalog, itemPrices, compositionCatalog, compositionPrices,
-  compositionItems,
-} from '../src/db/schema/civil-construction'
-import { sql } from 'drizzle-orm'
+process.env.NODE_ENV ??= 'test'
+process.env.DATABASE_URL ??= 'postgres://sinpres:sinpres@localhost:5438/sinpres'
+
+export {}
+
+const { setRateLimitLimiterForTests } = await import('../src/shared/rate-limit')
+setRateLimitLimiterForTests(null)
 
 // Deterministic synthetic fixtures. Tests must be fast (under 1s) and independent of
 // the Caixa monthly bundle — a full XLSX import would take minutes and any change in
 // real codes would break assertions. Seed orchestrator (src/db/seed/seed.ts) handles
 // the real data path for local dev and staging.
 async function seed() {
+  const { db } = await import('../src/db/client')
+  const { sectors } = await import('../src/db/schema/public')
+  const {
+    itemCatalog,
+    itemPrices,
+    compositionCatalog,
+    compositionPrices,
+    compositionItems,
+  } = await import('../src/db/schema/civil-construction')
+  const { sql } = await import('drizzle-orm')
+
   await db.execute(sql`
     TRUNCATE TABLE
       civil_construction.composition_items,
@@ -52,6 +63,9 @@ async function seed() {
   const insertedComps = await db.insert(compositionCatalog).values([
     { code: 1001, description: 'ALVENARIA DE VEDAÇÃO EM BLOCO CERÂMICO', unit: 'M2', previousCode: null },
     { code: 1002, description: 'REVESTIMENTO CERÂMICO', unit: 'M2', previousCode: null },
+    { code: 1003, description: 'PAREDE COM REVESTIMENTO CERÂMICO', unit: 'M2', previousCode: null },
+    { code: 1004, description: 'AMBIENTE COM PAREDE REVESTIDA', unit: 'M2', previousCode: null },
+    { code: 1005, description: 'COMPOSIÇÃO SEM PREÇO NA COORDENADA', unit: 'M2', previousCode: null },
   ]).returning({ id: compositionCatalog.id, code: compositionCatalog.code })
 
   const compIdByCode = new Map(insertedComps.map((r) => [r.code, r.id]))
@@ -59,12 +73,23 @@ async function seed() {
   await db.insert(compositionPrices).values([
     { catalogId: compIdByCode.get(1001)!, stateCode: 'SP', referenceMonth: '2026-04', isDesonerated: false, baseUnitCost: 15000 },
     { catalogId: compIdByCode.get(1002)!, stateCode: 'SP', referenceMonth: '2026-04', isDesonerated: false, baseUnitCost: 8500 },
+    { catalogId: compIdByCode.get(1003)!, stateCode: 'SP', referenceMonth: '2026-04', isDesonerated: false, baseUnitCost: 23500 },
+    { catalogId: compIdByCode.get(1004)!, stateCode: 'SP', referenceMonth: '2026-04', isDesonerated: false, baseUnitCost: 32000 },
   ])
 
   await db.insert(compositionItems).values([
     { compositionId: compIdByCode.get(1001)!, itemType: 'INPUT', itemCode: 3, description: 'CIMENTO PORTLAND', unit: 'KG', resourceType: 'MATERIAL', coefficient: '0.250000' },
     { compositionId: compIdByCode.get(1001)!, itemType: 'INPUT', itemCode: 5, description: 'PEDREIRO', unit: 'H', resourceType: 'LABOR', coefficient: '1.500000' },
+    { compositionId: compIdByCode.get(1002)!, itemType: 'INPUT', itemCode: 3, description: 'CIMENTO PORTLAND', unit: 'KG', resourceType: 'MATERIAL', coefficient: '0.300000' },
+    { compositionId: compIdByCode.get(1003)!, itemType: 'SUB_COMPOSITION', itemCode: 1002, description: 'REVESTIMENTO CERÂMICO', unit: 'M2', resourceType: null, coefficient: '1.000000' },
+    { compositionId: compIdByCode.get(1003)!, itemType: 'INPUT', itemCode: 5, description: 'PEDREIRO', unit: 'H', resourceType: 'LABOR', coefficient: '0.500000' },
+    { compositionId: compIdByCode.get(1004)!, itemType: 'SUB_COMPOSITION', itemCode: 1003, description: 'PAREDE COM REVESTIMENTO CERÂMICO', unit: 'M2', resourceType: null, coefficient: '1.000000' },
   ])
 }
 
-await seed()
+const testGlobal = globalThis as typeof globalThis & {
+  __sinpresSeedPromise?: Promise<void>
+}
+
+testGlobal.__sinpresSeedPromise ??= seed()
+await testGlobal.__sinpresSeedPromise
