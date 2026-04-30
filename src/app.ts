@@ -6,11 +6,15 @@ import { itemsApp } from './modules/items/items.routes'
 import { compositionsApp } from './modules/compositions/compositions.routes'
 import { sinapiApp } from './modules/sinapi/sinapi.routes'
 import { cors } from 'hono/cors'
+import { publicRateLimit } from './shared/rate-limit'
 
 export const app = new OpenAPIHono()
 
 // CORS
-app.use('*', cors())
+app.use('*', cors({
+  exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset', 'Retry-After'],
+}))
+app.use('/api/v1/*', publicRateLimit)
 
 // Routes
 app.route('/', healthApp)
