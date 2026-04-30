@@ -127,6 +127,8 @@ O endpoint de busca suporta **full-text search em português** (com stemming e n
 | `is_desonerated` | boolean | `false` | Regime tributário: `true` = desonerado, `false` = não desonerado |
 | `page` | number | `1` | Número da página |
 | `limit` | number | `50` | Itens por página (máx: `100`) |
+| `include_total` | boolean | `true` | Quando `false`, evita `COUNT(*)` e retorna `total`/`totalPages` como `null` |
+| `compact` | boolean | `false` | Quando `true`, retorna payload reduzido para listagens de alta performance |
 
 ### Exemplos
 
@@ -140,6 +142,12 @@ curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items?search=
 
 ```bash
 curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items?unit=KG&month=2026-03&page=2"
+```
+
+**Listagem rápida sem contagem total e com payload compacto:**
+
+```bash
+curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items?state=SP&month=2026-03&include_total=false&compact=true&limit=50"
 ```
 
 **Consultar insumo pelo código SINAPI:**
@@ -189,10 +197,13 @@ O limite é de 100 consultas por request. A resposta preserva a ordem de entrada
     "total": 6009,
     "page": 1,
     "limit": 50,
-    "totalPages": 121
+    "totalPages": 121,
+    "hasNextPage": true
   }
 }
 ```
+
+Com `include_total=false`, a API busca `limit + 1` registros para calcular `hasNextPage` sem executar `COUNT(*)`; nesse modo `total` e `totalPages` voltam como `null`.
 
 ## Busca de composições
 
@@ -209,6 +220,8 @@ Composições representam serviços completos de construção civil (ex: "Alvena
 | `is_desonerated` | boolean | `false` | Regime tributário |
 | `page` | number | `1` | Número da página |
 | `limit` | number | `50` | Itens por página (máx: `100`) |
+| `include_total` | boolean | `true` | Quando `false`, evita `COUNT(*)` e retorna `total`/`totalPages` como `null` |
+| `compact` | boolean | `false` | Quando `true`, retorna payload reduzido para listagens de alta performance |
 
 ### Exemplos
 
@@ -216,6 +229,12 @@ Composições representam serviços completos de construção civil (ex: "Alvena
 
 ```bash
 curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/compositions?search=alvenaria&state=SP"
+```
+
+**Listagem rápida sem contagem total e com payload compacto:**
+
+```bash
+curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/compositions?state=SP&month=2026-03&include_total=false&compact=true&limit=50"
 ```
 
 **Detalhar uma composição com seus itens:**
@@ -322,6 +341,22 @@ curl "https://api.sinpres.com.br/api/v1/sinapi/reference-months?state=SP"
 | `CENTO` | Cento |
 | `SC25KG` | Saco de 25 kg |
 | `KWH` | Quilowatt-hora |
+
+## Performance
+
+Para listagens grandes, prefira `include_total=false&compact=true` quando o consumidor não precisa exibir o total exato de resultados. Isso elimina o `COUNT(*)` da request e reduz o payload retornado; a paginação continua indicando se há próxima página via `meta.hasNextPage`.
+
+Os endpoints de metadados (`/api/v1/sinapi/states`, `/api/v1/sinapi/reference-months`) e a resolução automática do último mês disponível usam cache em memória por 5 minutos por instância serverless. Em produção, o pool Postgres usa `prepare: false` e pode ser ajustado por env vars:
+
+```env
+POSTGRES_POOL_MAX=5
+POSTGRES_IDLE_TIMEOUT_SECONDS=5
+POSTGRES_CONNECT_TIMEOUT_SECONDS=10
+POSTGRES_MAX_LIFETIME_SECONDS=1800
+POSTGRES_STATEMENT_TIMEOUT_MS=10000
+```
+
+O deploy Vercel está pinado em `iad1` para reduzir latência quando o Postgres também está próximo dessa região. Se o banco estiver em outra região, ajuste `vercel.json` para a região mais próxima do banco.
 
 ## Rodando localmente
 

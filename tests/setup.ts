@@ -1,6 +1,8 @@
 process.env.NODE_ENV ??= 'test'
 process.env.DATABASE_URL ??= 'postgres://sinpres:sinpres@localhost:5438/sinpres'
 
+export {}
+
 const { setRateLimitLimiterForTests } = await import('../src/shared/rate-limit')
 setRateLimitLimiterForTests(null)
 

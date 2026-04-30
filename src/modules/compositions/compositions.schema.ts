@@ -36,6 +36,18 @@ export const CompositionSchema = z.object({
   createdAt: z.string(),
 })
 
+export const CompositionCompactSchema = z.object({
+  id: z.number(),
+  code: z.number(),
+  description: z.string(),
+  unit: z.string(),
+  stateCode: z.string().length(2),
+  referenceMonth: z.string().length(7),
+  isDesonerated: z.boolean(),
+  baseUnitCost: z.number(),
+  previousCode: z.number().nullable(),
+})
+
 export const CompositionDetailSchema = CompositionSchema.extend({
   items: z.array(CompositionItemSchema),
 })
@@ -46,6 +58,7 @@ export const CompositionsQuerySchema = paginationQuerySchema.extend({
   state: z.string().length(2).optional().openapi({ example: 'SP', description: 'UF de 2 letras (ex: SP, RJ, MG)' }),
   month: z.string().regex(/^\d{4}-\d{2}$/).optional().openapi({ example: '2026-03', description: 'Mês de referência no formato AAAA-MM' }),
   is_desonerated: booleanQuerySchema.default(false).openapi({ example: false, description: 'Regime tributário: true = desonerado, false = não desonerado' }),
+  compact: booleanQuerySchema.default(false).openapi({ example: false, description: 'Retorna payload reduzido para listagens de alta performance' }),
 })
 
 export const CompositionDetailQuerySchema = z.object({
@@ -85,14 +98,15 @@ export const ExpandedCompositionNodeSchema = z.object({
 })
 
 export const PaginationMetaSchema = z.object({
-  total: z.number(),
+  total: z.number().nullable(),
   page: z.number(),
   limit: z.number(),
-  totalPages: z.number(),
+  totalPages: z.number().nullable(),
+  hasNextPage: z.boolean(),
 })
 
 export const CompositionsResponseSchema = z.object({
-  data: z.array(CompositionSchema),
+  data: z.array(z.union([CompositionSchema, CompositionCompactSchema])),
   meta: PaginationMetaSchema,
 })
 

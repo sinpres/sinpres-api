@@ -18,6 +18,7 @@ describe('Compositions', () => {
       expect(body.meta).toHaveProperty('page')
       expect(body.meta).toHaveProperty('limit')
       expect(body.meta).toHaveProperty('totalPages')
+      expect(body.meta).toHaveProperty('hasNextPage')
       expect(Array.isArray(body.data)).toBe(true)
       expect(body.data.length).toBeLessThanOrEqual(50)
     })
@@ -43,6 +44,28 @@ describe('Compositions', () => {
       const body = await res.json()
       expect(body.data.length).toBeLessThanOrEqual(1)
       expect(body.meta.page).toBe(1)
+    })
+
+    it('can skip total counts for faster pagination', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/compositions?state=SP&month=2026-04&include_total=false&limit=2')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.data).toHaveLength(2)
+      expect(body.meta.total).toBeNull()
+      expect(body.meta.totalPages).toBeNull()
+      expect(body.meta.hasNextPage).toBe(true)
+    })
+
+    it('supports compact list payloads', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/compositions?state=SP&month=2026-04&compact=true&limit=1')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.data).toHaveLength(1)
+      expect(body.data[0]).toHaveProperty('code')
+      expect(body.data[0]).toHaveProperty('baseUnitCost')
+      expect(body.data[0]).not.toHaveProperty('sourceUpdatedAt')
+      expect(body.data[0]).not.toHaveProperty('createdAt')
+      expect(body.data[0]).not.toHaveProperty('items')
     })
   })
 

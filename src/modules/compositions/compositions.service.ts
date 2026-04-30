@@ -5,6 +5,9 @@ import {
 } from '../../db/schema'
 import { eq, sql, and, count, desc, asc } from 'drizzle-orm'
 import type { PaginationQuery } from '../../shared/pagination'
+import { remember } from '../../shared/memory-cache'
+
+const METADATA_CACHE_TTL_MS = 5 * 60 * 1000
 
 interface CompositionsFilter extends PaginationQuery {
   search?: string
@@ -12,6 +15,7 @@ interface CompositionsFilter extends PaginationQuery {
   state?: string
   month?: string
   is_desonerated?: boolean
+  compact?: boolean
 }
 
 interface CompositionBulkQuery {
@@ -43,21 +47,25 @@ interface ExpandedCompositionNode {
 }
 
 export async function getLatestReferenceMonth(state?: string): Promise<string | null> {
-  const prices = civilConstructionCompositionPrices
-  const conditions = []
-  if (state) {
-    conditions.push(eq(prices.stateCode, state.toUpperCase()))
-  }
-  const where = conditions.length > 0 ? and(...conditions) : undefined
+  const normalizedState = state?.toUpperCase()
 
-  const result = await db
-    .select({ referenceMonth: prices.referenceMonth })
-    .from(prices)
-    .where(where)
-    .orderBy(desc(prices.referenceMonth))
-    .limit(1)
+  return remember(`compositions:latest-reference-month:${normalizedState ?? '*'}`, METADATA_CACHE_TTL_MS, async () => {
+    const prices = civilConstructionCompositionPrices
+    const conditions = []
+    if (normalizedState) {
+      conditions.push(eq(prices.stateCode, normalizedState))
+    }
+    const where = conditions.length > 0 ? and(...conditions) : undefined
 
-  return result[0]?.referenceMonth ?? null
+    const result = await db
+      .select({ referenceMonth: prices.referenceMonth })
+      .from(prices)
+      .where(where)
+      .orderBy(desc(prices.referenceMonth))
+      .limit(1)
+
+    return result[0]?.referenceMonth ?? null
+  })
 }
 
 export async function getCompositions(schemaName: string, filter: CompositionsFilter) {
@@ -93,7 +101,19 @@ export async function getCompositions(schemaName: string, filter: CompositionsFi
   const where = conditions.length > 0 ? and(...conditions) : undefined
   const offset = (filter.page - 1) * filter.limit
 
-  const selection = {
+  const compactSelection = {
+    id: catalog.id,
+    code: catalog.code,
+    description: catalog.description,
+    unit: catalog.unit,
+    stateCode: prices.stateCode,
+    referenceMonth: prices.referenceMonth,
+    isDesonerated: prices.isDesonerated,
+    baseUnitCost: prices.baseUnitCost,
+    previousCode: catalog.previousCode,
+  }
+
+  const fullSelection = {
     id: catalog.id,
     code: catalog.code,
     description: catalog.description,
@@ -106,22 +126,37 @@ export async function getCompositions(schemaName: string, filter: CompositionsFi
     previousCode: catalog.previousCode,
     createdAt: catalog.createdAt,
   }
+  const selection = filter.compact ? compactSelection : fullSelection
+  const includeTotal = filter.include_total !== false
+  const queryLimit = includeTotal ? filter.limit : filter.limit + 1
+
+  const compositionsQuery = db.select(selection)
+    .from(prices)
+    .innerJoin(catalog, eq(prices.catalogId, catalog.id))
+    .where(where)
+    .limit(queryLimit)
+    .offset(offset)
+    .orderBy(asc(catalog.code), asc(prices.stateCode))
+
+  if (!includeTotal) {
+    const rows = await compositionsQuery
+    const hasNextPage = rows.length > filter.limit
+    return { compositions: rows.slice(0, filter.limit), total: null, hasNextPage }
+  }
 
   const [compositions, totalResult] = await Promise.all([
-    db.select(selection)
-      .from(prices)
-      .innerJoin(catalog, eq(prices.catalogId, catalog.id))
-      .where(where)
-      .limit(filter.limit)
-      .offset(offset)
-      .orderBy(asc(catalog.code), asc(prices.stateCode)),
+    compositionsQuery,
     db.select({ total: count() })
       .from(prices)
       .innerJoin(catalog, eq(prices.catalogId, catalog.id))
       .where(where),
   ])
 
-  return { compositions, total: totalResult[0].total }
+  return {
+    compositions,
+    total: totalResult[0].total,
+    hasNextPage: filter.page * filter.limit < totalResult[0].total,
+  }
 }
 
 export async function getCompositionByCode(schemaName: string, code: number, filter: { state?: string; month?: string; is_desonerated?: boolean }) {
@@ -280,11 +315,11 @@ export async function getCompositionsBulk(schemaName: string, queries: Compositi
     ).values()
   )
 
-  const tuples = uniqueQueries.map((query) => sql`(
-    ${query.code},
-    ${query.state},
-    ${query.month},
-    ${query.isDesonerated}
+  const values = uniqueQueries.map((query) => sql`(
+    ${query.code}::integer,
+    ${query.state}::varchar(2),
+    ${query.month}::varchar(7),
+    ${query.isDesonerated}::boolean
   )`)
 
   const raw = await db.execute<{
@@ -300,6 +335,9 @@ export async function getCompositionsBulk(schemaName: string, queries: Compositi
     previous_code: number | null
     created_at: Date | string
   }>(sql`
+    WITH requested(code, state_code, reference_month, is_desonerated) AS (
+      VALUES ${sql.join(values, sql`, `)}
+    )
     SELECT
       catalog.id,
       catalog.code,
@@ -312,11 +350,14 @@ export async function getCompositionsBulk(schemaName: string, queries: Compositi
       catalog.source_updated_at,
       catalog.previous_code,
       catalog.created_at
-    FROM civil_construction.composition_prices prices
+    FROM requested
     INNER JOIN civil_construction.composition_catalog catalog
-      ON catalog.id = prices.catalog_id
-    WHERE (catalog.code, prices.state_code, prices.reference_month, prices.is_desonerated)
-      IN (${sql.join(tuples, sql`, `)})
+      ON catalog.code = requested.code
+    INNER JOIN civil_construction.composition_prices prices
+      ON prices.catalog_id = catalog.id
+     AND prices.state_code = requested.state_code
+     AND prices.reference_month = requested.reference_month
+     AND prices.is_desonerated = requested.is_desonerated
   `)
 
   const rows = ((raw as unknown as { rows?: unknown[] }).rows ?? (raw as unknown as unknown[])) as Array<{

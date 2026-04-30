@@ -48,6 +48,7 @@ export const itemPrices = civilConstructionSchema.table('item_prices', {
   uniqueIndex('item_prices_unique_key').on(table.catalogId, table.stateCode, table.referenceMonth, table.isDesonerated),
   index('item_prices_catalog_id_idx').on(table.catalogId),
   index('item_prices_state_month_idx').on(table.stateCode, table.referenceMonth),
+  index('item_prices_coordinate_catalog_idx').on(table.stateCode, table.referenceMonth, table.isDesonerated, table.catalogId),
   index('item_prices_reference_month_idx').on(table.referenceMonth),
   index('item_prices_is_desonerated_idx').on(table.isDesonerated),
 ])
@@ -83,6 +84,7 @@ export const compositionPrices = civilConstructionSchema.table('composition_pric
   uniqueIndex('composition_prices_unique_key').on(table.catalogId, table.stateCode, table.referenceMonth, table.isDesonerated),
   index('composition_prices_catalog_id_idx').on(table.catalogId),
   index('composition_prices_state_month_idx').on(table.stateCode, table.referenceMonth),
+  index('composition_prices_coordinate_catalog_idx').on(table.stateCode, table.referenceMonth, table.isDesonerated, table.catalogId),
   index('composition_prices_reference_month_idx').on(table.referenceMonth),
   index('composition_prices_is_desonerated_idx').on(table.isDesonerated),
 ])

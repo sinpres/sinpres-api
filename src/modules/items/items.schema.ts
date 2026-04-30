@@ -30,12 +30,26 @@ export const ItemSchema = z.object({
   createdAt: z.string(),
 })
 
+export const ItemCompactSchema = z.object({
+  id: z.number(),
+  categoryId: z.number().nullable(),
+  code: z.number(),
+  description: z.string(),
+  unit: z.string(),
+  stateCode: z.string().length(2),
+  referenceMonth: z.string().length(7),
+  isDesonerated: z.boolean(),
+  unitPrice: z.number(),
+  previousCode: z.number().nullable(),
+})
+
 export const ItemsQuerySchema = paginationQuerySchema.extend({
   search: z.string().optional().openapi({ example: 'tubo pvc', description: 'Termo de busca (full-text search em português)' }),
   unit: z.string().optional().openapi({ example: 'KG', description: 'Filtrar por unidade de medida' }),
   state: z.string().length(2).optional().openapi({ example: 'SP', description: 'UF de 2 letras (ex: SP, RJ, MG)' }),
   month: z.string().regex(/^\d{4}-\d{2}$/).optional().openapi({ example: '2026-03', description: 'Mês de referência no formato AAAA-MM' }),
   is_desonerated: booleanQuerySchema.default(false).openapi({ example: false, description: 'Regime tributário: true = desonerado, false = não desonerado' }),
+  compact: booleanQuerySchema.default(false).openapi({ example: false, description: 'Retorna payload reduzido para listagens de alta performance' }),
 })
 
 export const ItemDetailQuerySchema = z.object({
@@ -56,14 +70,15 @@ export const ItemsBulkRequestSchema = z.object({
 })
 
 export const PaginationMetaSchema = z.object({
-  total: z.number(),
+  total: z.number().nullable(),
   page: z.number(),
   limit: z.number(),
-  totalPages: z.number(),
+  totalPages: z.number().nullable(),
+  hasNextPage: z.boolean(),
 })
 
 export const ItemsResponseSchema = z.object({
-  data: z.array(ItemSchema),
+  data: z.array(z.union([ItemSchema, ItemCompactSchema])),
   meta: PaginationMetaSchema,
 })
 

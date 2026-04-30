@@ -34,7 +34,9 @@ const listRoute = createRoute({
 
 **Regime tributário:** Use o parâmetro \`is_desonerated\` para filtrar por desoneração. Default: \`false\`.
 
-**Paginação:** Use \`page\` e \`limit\` para controlar a paginação. Máximo de 100 itens por página.`,
+**Paginação:** Use \`page\` e \`limit\` para controlar a paginação. Máximo de 100 itens por página.
+
+**Performance:** Use \`include_total=false\` para evitar \`COUNT(*)\` e \`compact=true\` para retornar payload reduzido.`,
   request: {
     params: z.object({ slug: z.string().openapi({ example: 'civil-construction' }) }),
     query: CompositionsQuerySchema,
@@ -140,8 +142,8 @@ compositionsApp.openapi(listRoute, async (c) => {
   const sector = await getSectorBySlug(slug)
   if (!sector) return notFound(c, 'Sector not found')
 
-  const { compositions, total } = await getCompositions(sector.schemaName, query)
-  const meta = paginationMeta(total, query.page, query.limit)
+  const { compositions, total, hasNextPage } = await getCompositions(sector.schemaName, query)
+  const meta = paginationMeta(total, query.page, query.limit, hasNextPage)
 
   return c.json({ data: compositions, meta }, 200)
 })

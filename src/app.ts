@@ -12,6 +12,7 @@ export const app = new OpenAPIHono()
 
 // CORS
 app.use('*', cors({
+  origin: '*',
   exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset', 'Retry-After'],
 }))
 app.use('/api/v1/*', publicRateLimit)

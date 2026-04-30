@@ -25,6 +25,11 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   PORT: z.coerce.number().default(3000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  POSTGRES_POOL_MAX: z.coerce.number().int().min(1).max(50).default(5),
+  POSTGRES_IDLE_TIMEOUT_SECONDS: z.coerce.number().int().min(1).max(300).default(5),
+  POSTGRES_CONNECT_TIMEOUT_SECONDS: z.coerce.number().int().min(1).max(60).default(10),
+  POSTGRES_MAX_LIFETIME_SECONDS: z.coerce.number().int().min(60).max(3600).default(1800),
+  POSTGRES_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   UPSTASH_REDIS_REST_URL: z.string().min(1).optional(),
   UPSTASH_REDIS_REST_TOKEN: z.string().min(1).optional(),
 }).superRefine((value, ctx) => {
