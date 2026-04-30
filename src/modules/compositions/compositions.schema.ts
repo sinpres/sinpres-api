@@ -1,6 +1,12 @@
 import { z } from '@hono/zod-openapi'
 import { paginationQuerySchema } from '../../shared/pagination'
 
+const booleanQuerySchema = z.preprocess((value) => {
+  if (value === 'true') return true
+  if (value === 'false') return false
+  return value
+}, z.boolean())
+
 export const CompositionItemSchema = z.object({
   itemType: z.enum(['INPUT', 'SUB_COMPOSITION']),
   code: z.number(),
@@ -39,13 +45,43 @@ export const CompositionsQuerySchema = paginationQuerySchema.extend({
   unit: z.string().optional().openapi({ example: 'M2', description: 'Filtrar por unidade de medida' }),
   state: z.string().length(2).optional().openapi({ example: 'SP', description: 'UF de 2 letras (ex: SP, RJ, MG)' }),
   month: z.string().regex(/^\d{4}-\d{2}$/).optional().openapi({ example: '2026-03', description: 'Mês de referência no formato AAAA-MM' }),
-  is_desonerated: z.coerce.boolean().default(false).openapi({ example: false, description: 'Regime tributário: true = desonerado, false = não desonerado' }),
+  is_desonerated: booleanQuerySchema.default(false).openapi({ example: false, description: 'Regime tributário: true = desonerado, false = não desonerado' }),
 })
 
 export const CompositionDetailQuerySchema = z.object({
   state: z.string().length(2).optional().openapi({ example: 'SP', description: 'UF de 2 letras (ex: SP, RJ, MG)' }),
   month: z.string().regex(/^\d{4}-\d{2}$/).optional().openapi({ example: '2026-03', description: 'Mês de referência no formato AAAA-MM' }),
-  is_desonerated: z.coerce.boolean().default(false).openapi({ example: false, description: 'Regime tributário: true = desonerado, false = não desonerado' }),
+  is_desonerated: booleanQuerySchema.default(false).openapi({ example: false, description: 'Regime tributário: true = desonerado, false = não desonerado' }),
+})
+
+export const CompositionBulkQuerySchema = z.object({
+  code: z.string().regex(/^\d+$/).openapi({ example: '7327', description: 'Código SINAPI da composição' }),
+  state: z.string().length(2).transform((value) => value.toUpperCase()).openapi({ example: 'SP', description: 'UF de 2 letras' }),
+  month: z.string().regex(/^\d{4}-\d{2}$/).openapi({ example: '2026-03', description: 'Mês de referência no formato AAAA-MM' }),
+  is_desonerated: z.boolean().openapi({ example: false, description: 'Regime tributário' }),
+})
+
+export const CompositionsBulkRequestSchema = z.object({
+  queries: z.array(CompositionBulkQuerySchema).max(100),
+})
+
+export const ExpandedCompositionQuerySchema = z.object({
+  state: z.string().length(2).transform((value) => value.toUpperCase()).openapi({ example: 'SP', description: 'UF de 2 letras' }),
+  month: z.string().regex(/^\d{4}-\d{2}$/).openapi({ example: '2026-03', description: 'Mês de referência no formato AAAA-MM' }),
+  is_desonerated: booleanQuerySchema.openapi({ example: false, description: 'Regime tributário' }),
+  max_depth: z.coerce.number().int().min(0).default(5).openapi({ example: 5, description: 'Profundidade máxima da árvore. Valores acima de 8 são limitados pelo servidor.' }),
+})
+
+export const ExpandedCompositionNodeSchema = z.object({
+  code: z.string(),
+  description: z.string(),
+  unit: z.string().nullable(),
+  depth: z.number(),
+  coefficient: z.string().nullable(),
+  item_type: z.enum(['COMPOSITION', 'INPUT', 'SUB_COMPOSITION']),
+  unit_price: z.number().nullable(),
+  items: z.array(z.any()).openapi({ description: 'Nós filhos da composição expandida, com o mesmo formato do nó atual.' }),
+  truncated: z.boolean(),
 })
 
 export const PaginationMetaSchema = z.object({
@@ -62,4 +98,17 @@ export const CompositionsResponseSchema = z.object({
 
 export const CompositionResponseSchema = z.object({
   data: CompositionDetailSchema,
+})
+
+export const CompositionsBulkResponseSchema = z.object({
+  results: z.array(z.object({
+    code: z.string(),
+    found: z.boolean(),
+    composition: CompositionSchema.optional(),
+    reason: z.literal('no_price_for_coordinate').optional(),
+  })),
+})
+
+export const ExpandedCompositionResponseSchema = z.object({
+  data: ExpandedCompositionNodeSchema,
 })

@@ -10,6 +10,36 @@ https://api.sinpres.com.br
 
 Não requer autenticação. Todos os endpoints são públicos.
 
+## Rate-limit
+
+Os endpoints públicos em `/api/v1/*` têm rate-limit anônimo de `100 req/min` com sliding window. `/health` e `/doc` ficam fora do rate-limit.
+
+A identificação do bucket combina o IP da conexão com o primeiro IP do header `X-Forwarded-For`:
+
+```txt
+<connectionIp>|<leftmost X-Forwarded-For>
+```
+
+O `connectionIp` é resolvido por `cf-connecting-ip`, depois `x-real-ip`, depois o IP do runtime. Quando `X-Forwarded-For` não existe, o segundo componente vira `-`. Essa combinação mantém buckets úteis para consumers em serverless com IPs rotativos e evita que spoofing de `X-Forwarded-For` consuma a cota de outro cliente sem compartilhar o mesmo IP de conexão.
+
+Toda resposta em `/api/v1/*` expõe os headers:
+
+```txt
+X-RateLimit-Limit
+X-RateLimit-Remaining
+X-RateLimit-Reset
+Retry-After
+```
+
+`X-RateLimit-Reset` é epoch em milissegundos. Em `429`, o corpo segue o formato:
+
+```json
+{
+  "error": "Rate limit exceeded",
+  "retry_after": 12
+}
+```
+
 ## Por que este projeto existe?
 
 A **Caixa Econômica Federal**, em parceria com o **IBGE**, mantém o **SINAPI** (Sistema Nacional de Pesquisa de Custos e Índices da Construção Civil) — uma base de dados com milhares de insumos, composições e preços referenciais utilizados em obras públicas e privadas no Brasil. Esses dados são a referência oficial para orçamentos de obras financiadas com recursos públicos e servem como base para licitações, auditorias e planejamento de custos em todo o país.
@@ -74,8 +104,11 @@ curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items/11281" 
 | `GET` | `/api/v1/sectors/:slug/categories` | Listar categorias de um setor |
 | `GET` | `/api/v1/sectors/:slug/items` | Buscar insumos (paginado, com filtros) |
 | `GET` | `/api/v1/sectors/:slug/items/:code` | Detalhar um insumo por código |
+| `POST` | `/api/v1/sectors/:slug/items/bulk` | Buscar múltiplos insumos por código |
 | `GET` | `/api/v1/sectors/:slug/compositions` | Buscar composições (paginado, com filtros) |
 | `GET` | `/api/v1/sectors/:slug/compositions/:code` | Detalhar uma composição por código com itens |
+| `POST` | `/api/v1/sectors/:slug/compositions/bulk` | Buscar múltiplas composições por código |
+| `GET` | `/api/v1/sectors/:slug/compositions/:code/expanded` | Expandir uma composição recursivamente |
 | `GET` | `/api/v1/sinapi/states` | Listar UFs com dados disponíveis |
 | `GET` | `/api/v1/sinapi/reference-months` | Listar meses de referência disponíveis |
 
@@ -114,6 +147,21 @@ curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items?unit=KG
 ```bash
 curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items/34"
 ```
+
+**Consultar múltiplos insumos em uma request:**
+
+```bash
+curl -X POST "https://api.sinpres.com.br/api/v1/sectors/civil-construction/items/bulk" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "queries": [
+      { "code": "34", "state": "SP", "month": "2026-03", "is_desonerated": false },
+      { "code": "11281", "state": "SP", "month": "2026-03", "is_desonerated": false }
+    ]
+  }'
+```
+
+O limite é de 100 consultas por request. A resposta preserva a ordem de entrada e retorna `found: false` quando não há preço para a coordenada solicitada.
 
 ### Resposta
 
@@ -175,6 +223,29 @@ curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/compositions?
 ```bash
 curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/compositions/7327"
 ```
+
+**Consultar múltiplas composições em uma request:**
+
+```bash
+curl -X POST "https://api.sinpres.com.br/api/v1/sectors/civil-construction/compositions/bulk" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "queries": [
+      { "code": "7327", "state": "SP", "month": "2026-03", "is_desonerated": false },
+      { "code": "87514", "state": "SP", "month": "2026-03", "is_desonerated": false }
+    ]
+  }'
+```
+
+O endpoint bulk de composições não retorna `items`; ele serve para buscar preços de várias composições conhecidas sem N+1.
+
+**Expandir a árvore de uma composição no servidor:**
+
+```bash
+curl "https://api.sinpres.com.br/api/v1/sectors/civil-construction/compositions/87514/expanded?state=SP&month=2026-03&is_desonerated=false&max_depth=5"
+```
+
+`max_depth` tem default `5` e cap server-side em `8`. Quando uma sub-composição é cortada pelo limite, o nó e a raiz retornam `truncated: true`.
 
 ### Resposta de detalhe
 

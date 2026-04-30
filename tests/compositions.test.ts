@@ -73,4 +73,69 @@ describe('Compositions', () => {
       expect(res.status).toBe(404)
     })
   })
+
+  describe('POST /api/v1/sectors/:slug/compositions/bulk', () => {
+    it('returns valid and invalid codes preserving order', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/compositions/bulk', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          queries: [
+            { code: '1001', state: 'SP', month: '2026-04', is_desonerated: false },
+            { code: '999999', state: 'SP', month: '2026-04', is_desonerated: false },
+            { code: '1002', state: 'SP', month: '2026-04', is_desonerated: false },
+          ],
+        }),
+      })
+
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.results.map((result: any) => result.code)).toEqual(['1001', '999999', '1002'])
+      expect(body.results[0].found).toBe(true)
+      expect(body.results[0].composition.code).toBe(1001)
+      expect(body.results[0].composition).not.toHaveProperty('items')
+      expect(body.results[1]).toEqual({
+        code: '999999',
+        found: false,
+        reason: 'no_price_for_coordinate',
+      })
+      expect(body.results[2].found).toBe(true)
+      expect(body.results[2].composition.code).toBe(1002)
+    })
+
+    it('enforces the 100 queries limit', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/compositions/bulk', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          queries: Array.from({ length: 101 }, (_, index) => ({
+            code: String(1000 + index),
+            state: 'SP',
+            month: '2026-04',
+            is_desonerated: false,
+          })),
+        }),
+      })
+
+      expect(res.status).toBe(400)
+    })
+
+    it('returns the same response for duplicate queries', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/compositions/bulk', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          queries: [
+            { code: '1001', state: 'SP', month: '2026-04', is_desonerated: false },
+            { code: '1001', state: 'SP', month: '2026-04', is_desonerated: false },
+          ],
+        }),
+      })
+
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.results).toHaveLength(2)
+      expect(body.results[0]).toEqual(body.results[1])
+    })
+  })
 })
