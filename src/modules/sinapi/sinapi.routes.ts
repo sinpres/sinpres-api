@@ -1,6 +1,7 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
 import { z } from 'zod'
 import { getAvailableStates, getReferenceMonths } from './sinapi.service'
+import { optionalApiKeySecurity } from '../../shared/openapi'
 
 export const sinapiApp = new OpenAPIHono()
 
@@ -16,6 +17,7 @@ const statesRoute = createRoute({
   method: 'get',
   path: '/api/v1/sinapi/states',
   tags: ['SINAPI'],
+  security: optionalApiKeySecurity,
   summary: 'Listar UFs disponíveis',
   description: 'Retorna a lista de UFs (estados) que possuem dados de insumos ou composições no SINAPI.',
   responses: {
@@ -30,6 +32,7 @@ const referenceMonthsRoute = createRoute({
   method: 'get',
   path: '/api/v1/sinapi/reference-months',
   tags: ['SINAPI'],
+  security: optionalApiKeySecurity,
   summary: 'Listar meses de referência disponíveis',
   description: 'Retorna a lista de meses de referência disponíveis, ordenados do mais recente para o mais antigo. Opcionalmente filtre por UF.',
   request: {

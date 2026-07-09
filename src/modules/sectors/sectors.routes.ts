@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { SectorsResponseSchema, SectorResponseSchema } from './sectors.schema'
 import { getAllSectors, getSectorBySlug } from './sectors.service'
 import { notFound } from '../../shared/errors'
+import { optionalApiKeySecurity } from '../../shared/openapi'
 
 export const sectorsApp = new OpenAPIHono()
 
@@ -10,6 +11,7 @@ const listRoute = createRoute({
   method: 'get',
   path: '/api/v1/sectors',
   tags: ['Sectors'],
+  security: optionalApiKeySecurity,
   summary: 'Listar setores',
   description: 'Retorna todos os setores disponíveis para consulta. Use o campo `slug` do setor para acessar suas categorias e itens.',
   responses: {
@@ -24,6 +26,7 @@ const getRoute = createRoute({
   method: 'get',
   path: '/api/v1/sectors/{slug}',
   tags: ['Sectors'],
+  security: optionalApiKeySecurity,
   summary: 'Detalhar setor',
   description: 'Retorna os detalhes de um setor específico pelo seu slug. Exemplo: `civil-construction`.',
   request: {

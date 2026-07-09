@@ -19,6 +19,11 @@ jobs:
 
       - run: bun install
 
+      - name: Run database migrations
+        run: bun run db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
       - run: bun run vercel-build
 
       - run: bunx vercel pull --yes --environment production --token=$VERCEL_TOKEN

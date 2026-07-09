@@ -5,12 +5,14 @@ import { getItems, getItemByCode, getItemsBulk } from './items.service'
 import { getSectorBySlug } from '../sectors/sectors.service'
 import { notFound } from '../../shared/errors'
 import { paginationMeta } from '../../shared/pagination'
+import { optionalApiKeySecurity } from '../../shared/openapi'
 export const itemsApp = new OpenAPIHono()
 
 const listRoute = createRoute({
   method: 'get',
   path: '/api/v1/sectors/{slug}/items',
   tags: ['Items'],
+  security: optionalApiKeySecurity,
   summary: 'Buscar itens de um setor',
   description: `Retorna uma lista paginada de itens (insumos) de um setor.
 
@@ -47,6 +49,7 @@ const getRoute = createRoute({
   method: 'get',
   path: '/api/v1/sectors/{slug}/items/{code}',
   tags: ['Items'],
+  security: optionalApiKeySecurity,
   summary: 'Detalhar item por código',
   description: 'Retorna os detalhes completos de um item (insumo) pelo seu código de referência. Para Construção Civil, o código corresponde ao código SINAPI. Aceita filtros opcionais de UF, mês e regime tributário.',
   request: {
@@ -72,6 +75,7 @@ const bulkRoute = createRoute({
   method: 'post',
   path: '/api/v1/sectors/{slug}/items/bulk',
   tags: ['Items'],
+  security: optionalApiKeySecurity,
   summary: 'Buscar múltiplos insumos por código',
   description: 'Retorna múltiplos insumos em uma única request, preservando a ordem de entrada e evitando N+1 no consumidor. Limite máximo de 100 consultas por request.',
   request: {

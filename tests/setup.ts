@@ -1,5 +1,6 @@
 process.env.NODE_ENV ??= 'test'
 process.env.DATABASE_URL ??= 'postgres://sinpres:sinpres@localhost:5438/sinpres'
+process.env.ADMIN_API_SECRET ??= 'test-admin-secret-at-least-32-characters-long'
 
 export {}
 
