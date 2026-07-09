@@ -4,6 +4,7 @@ import { CategoriesResponseSchema } from './categories.schema'
 import { getCategoriesBySector } from './categories.service'
 import { getSectorBySlug } from '../sectors/sectors.service'
 import { notFound } from '../../shared/errors'
+import { optionalApiKeySecurity } from '../../shared/openapi'
 
 export const categoriesApp = new OpenAPIHono()
 
@@ -11,6 +12,7 @@ const listRoute = createRoute({
   method: 'get',
   path: '/api/v1/sectors/{slug}/categories',
   tags: ['Categories'],
+  security: optionalApiKeySecurity,
   summary: 'Listar categorias de um setor',
   description: 'Retorna todas as categorias de itens disponíveis dentro de um setor específico.',
   request: {

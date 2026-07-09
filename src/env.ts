@@ -32,6 +32,8 @@ const envSchema = z.object({
   POSTGRES_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   UPSTASH_REDIS_REST_URL: z.string().min(1).optional(),
   UPSTASH_REDIS_REST_TOKEN: z.string().min(1).optional(),
+  // Shared secret the web panel presents (Bearer) to reach /admin/clients.
+  ADMIN_API_SECRET: z.string().min(32).optional(),
 }).superRefine((value, ctx) => {
   if (value.NODE_ENV !== 'production') return
 
@@ -47,6 +49,14 @@ const envSchema = z.object({
     ctx.addIssue({
       code: 'custom',
       path: ['UPSTASH_REDIS_REST_TOKEN'],
+      message: 'Required in production',
+    })
+  }
+
+  if (!value.ADMIN_API_SECRET) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['ADMIN_API_SECRET'],
       message: 'Required in production',
     })
   }

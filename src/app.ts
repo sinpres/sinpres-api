@@ -5,8 +5,9 @@ import { categoriesApp } from './modules/categories/categories.routes'
 import { itemsApp } from './modules/items/items.routes'
 import { compositionsApp } from './modules/compositions/compositions.routes'
 import { sinapiApp } from './modules/sinapi/sinapi.routes'
+import { adminApp } from './modules/admin/admin.routes'
 import { cors } from 'hono/cors'
-import { publicRateLimit } from './shared/rate-limit'
+import { apiKeyAuth } from './shared/api-key-auth'
 
 export const app = new OpenAPIHono()
 
@@ -15,7 +16,7 @@ app.use('*', cors({
   origin: '*',
   exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset', 'Retry-After'],
 }))
-app.use('/api/v1/*', publicRateLimit)
+app.use('/api/v1/*', apiKeyAuth)
 
 // Routes
 app.route('/', healthApp)
@@ -24,6 +25,20 @@ app.route('/', categoriesApp)
 app.route('/', itemsApp)
 app.route('/', compositionsApp)
 app.route('/', sinapiApp)
+app.route('/', adminApp)
+
+app.openAPIRegistry.registerComponent('securitySchemes', 'ApiKeyAuth', {
+  type: 'apiKey',
+  in: 'header',
+  name: 'X-Api-Key',
+  description: 'Chave de integração para produtos internos (tier com limite por usuário final).',
+})
+
+app.openAPIRegistry.registerComponent('securitySchemes', 'AdminBearer', {
+  type: 'http',
+  scheme: 'bearer',
+  description: 'Segredo compartilhado (ADMIN_API_SECRET) apresentado pelo painel web. Uso interno.',
+})
 
 // OpenAPI spec
 app.doc('/doc', {
@@ -85,6 +100,14 @@ GET /api/v1/sinapi/states
 GET /api/v1/sinapi/reference-months?state=SP
 \`\`\`
 
+## Autenticação e limites de uso
+
+A API pública não exige chave: cada IP tem **100 requisições por minuto**. Produtos internos autenticam com o header \`X-Api-Key\` e podem enviar \`X-End-User-Id\` para separar a cota por usuário final — sem esse header o produto inteiro divide um único bucket, e ele é ignorado quando não há chave válida.
+
+Chave inválida ou revogada retorna **401** e continua limitada pelo IP (não cai para o tier anônimo). Falta de escopo retorna **403**: rotas de insumos exigem \`read:items\`, composições exigem \`read:compositions\`; metadados (setores, categorias, SINAPI) pedem apenas uma chave válida.
+
+Cada request consome unidades da cota conforme o custo: \`/bulk\` = 10, \`/expanded\` = 5, demais = 1. Os headers \`X-RateLimit-*\` refletem o consumo e \`Retry-After\` acompanha as respostas 429.
+
 ## Unidades de medida disponíveis (Construção Civil)
 
 \`KG\`, \`M\`, \`M2\`, \`M3\`, \`UN\`, \`L\`, \`CJ\`, \`JG\`, \`PAR\`, \`H\`, \`DIA\`, \`MES\`, \`T\`, \`MIL\`, \`CENTO\`, \`SC25KG\`, \`KWH\`, \`100M\`, \`310ML\`, \`MXMES\`, \`M2XMES\`, \`M/MES\`, \`UNXMES\`
@@ -139,6 +162,10 @@ Use este campo para **detectar se o código que você está consultando é um su
     {
       name: 'SINAPI',
       description: 'Metadados e informações auxiliares sobre os dados SINAPI, como UFs disponíveis e meses de referência.',
+    },
+    {
+      name: 'Admin',
+      description: 'Autenticação de operadores internos e gestão de chaves de integração. Uso interno, não faz parte da API pública.',
     },
   ],
 })

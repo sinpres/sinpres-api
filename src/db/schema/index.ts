@@ -1,4 +1,4 @@
-export { sectors } from './public'
+export { sectors, adminUsers, integrationClients } from './public'
 export {
   civilConstructionSchema,
   categories as civilConstructionCategories,

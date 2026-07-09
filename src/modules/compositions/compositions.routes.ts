@@ -14,6 +14,7 @@ import { getCompositions, getCompositionByCode, getCompositionsBulk, getExpanded
 import { getSectorBySlug } from '../sectors/sectors.service'
 import { notFound } from '../../shared/errors'
 import { paginationMeta } from '../../shared/pagination'
+import { optionalApiKeySecurity } from '../../shared/openapi'
 
 export const compositionsApp = new OpenAPIHono()
 
@@ -21,6 +22,7 @@ const listRoute = createRoute({
   method: 'get',
   path: '/api/v1/sectors/{slug}/compositions',
   tags: ['Compositions'],
+  security: optionalApiKeySecurity,
   summary: 'Buscar composições de um setor',
   description: `Retorna uma lista paginada de composições (serviços SINAPI) de um setor.
 
@@ -57,6 +59,7 @@ const getRoute = createRoute({
   method: 'get',
   path: '/api/v1/sectors/{slug}/compositions/{code}',
   tags: ['Compositions'],
+  security: optionalApiKeySecurity,
   summary: 'Detalhar composição por código',
   description: 'Retorna os detalhes completos de uma composição (serviço SINAPI) pelo seu código de referência, incluindo todos os itens que a compõem (insumos e sub-composições) com coeficientes e preços.',
   request: {
@@ -82,6 +85,7 @@ const bulkRoute = createRoute({
   method: 'post',
   path: '/api/v1/sectors/{slug}/compositions/bulk',
   tags: ['Compositions'],
+  security: optionalApiKeySecurity,
   summary: 'Buscar múltiplas composições por código',
   description: 'Retorna múltiplas composições em uma única request, preservando a ordem de entrada. Não retorna os itens da composição; use o endpoint expanded para árvore recursiva.',
   request: {
@@ -114,6 +118,7 @@ const expandedRoute = createRoute({
   method: 'get',
   path: '/api/v1/sectors/{slug}/compositions/{code}/expanded',
   tags: ['Compositions'],
+  security: optionalApiKeySecurity,
   summary: 'Expandir composição recursivamente',
   description: 'Resolve a árvore de uma composição no servidor, incluindo insumos e sub-composições até a profundidade solicitada. O limite máximo aplicado pelo servidor é 8.',
   request: {
