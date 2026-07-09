@@ -24,8 +24,14 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
-      # Build on Vercel (not --prebuilt): the prebuilt flow doesn't apply the
-      # project's runtime env (e.g. NODEJS_HELPERS=0), which POST body parsing needs.
+      - run: bun run vercel-build
+
       - run: bunx vercel pull --yes --environment production --token=$VERCEL_TOKEN
 
-      - run: bunx vercel deploy --prod --token=$VERCEL_TOKEN
+      # NODEJS_HELPERS=0 sets shouldAddHelpers:false in the function config, so
+      # Vercel doesn't drain the request body before Hono reads it (POST routes).
+      - run: bunx vercel build --prod --token=$VERCEL_TOKEN
+        env:
+          NODEJS_HELPERS: '0'
+
+      - run: bunx vercel deploy --prebuilt --prod --token=$VERCEL_TOKEN
