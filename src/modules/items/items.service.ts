@@ -357,9 +357,12 @@ export async function getItems(schemaName: string, filter: ItemsFilter) {
       return result
     }
 
-    // FTS miss (typo/variant) → trigram similarity fallback on description
-    const trigramCondition = sql`similarity(${catalog.description}, ${filter.search}) > 0.25`
-    const trigramOrder = sql`similarity(${catalog.description}, ${filter.search}) DESC`
+    // FTS miss (typo/variant) → trigram fallback on description. word_similarity
+    // (query vs best-matching word) instead of whole-string similarity: real
+    // catalog descriptions are long, so whole-string similarity for a one-word
+    // typo never clears any useful threshold (~0.1 vs 0.5 for word_similarity).
+    const trigramCondition = sql`word_similarity(${filter.search}, ${catalog.description}) > 0.4`
+    const trigramOrder = sql`word_similarity(${filter.search}, ${catalog.description}) DESC`
     return runListing(trigramCondition, trigramOrder)
   }
 
