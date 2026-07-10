@@ -32,8 +32,9 @@ export const itemCatalog = civilConstructionSchema.table('item_catalog', {
   index('item_catalog_previous_code_idx').on(table.previousCode),
   index('item_catalog_search_idx').using(
     'gin',
-    sql`to_tsvector('portuguese', ${table.description} || ' ' || coalesce(${table.generalInfo}, ''))`
+    sql`to_tsvector('portuguese_unaccent', ${table.description} || ' ' || coalesce(${table.generalInfo}, ''))`
   ),
+  index('item_catalog_description_trgm_idx').using('gin', sql`${table.description} gin_trgm_ops`),
 ])
 
 export const itemPrices = civilConstructionSchema.table('item_prices', {
@@ -68,8 +69,9 @@ export const compositionCatalog = civilConstructionSchema.table('composition_cat
   index('composition_catalog_previous_code_idx').on(table.previousCode),
   index('composition_catalog_search_idx').using(
     'gin',
-    sql`to_tsvector('portuguese', ${table.description})`
+    sql`to_tsvector('portuguese_unaccent', ${table.description})`
   ),
+  index('composition_catalog_description_trgm_idx').using('gin', sql`${table.description} gin_trgm_ops`),
 ])
 
 export const compositionPrices = civilConstructionSchema.table('composition_prices', {

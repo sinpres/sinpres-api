@@ -16,7 +16,7 @@ export const ItemSchema = z.object({
   stateCode: z.string().length(2).nullable(),
   referenceMonth: z.string().length(7).nullable(),
   isDesonerated: z.boolean().nullable(),
-  unitPrice: z.number().nullable(),
+  unitPrice: z.number().nullable().describe('Preço em centavos (R$ × 100)'),
   technicalStandards: z.string().nullable(),
   generalInfo: z.string().nullable(),
   imageUrl: z.string().nullable(),
@@ -39,23 +39,25 @@ export const ItemCompactSchema = z.object({
   stateCode: z.string().length(2).nullable(),
   referenceMonth: z.string().length(7).nullable(),
   isDesonerated: z.boolean().nullable(),
-  unitPrice: z.number().nullable(),
+  unitPrice: z.number().nullable().describe('Preço em centavos (R$ × 100)'),
   previousCode: z.number().nullable(),
 })
 
 export const ItemsQuerySchema = paginationQuerySchema.extend({
   search: z.string().optional().openapi({ example: 'tubo pvc', description: 'Termo de busca (full-text search em português)' }),
   unit: z.string().optional().openapi({ example: 'KG', description: 'Filtrar por unidade de medida' }),
-  state: z.string().length(2).optional().openapi({ example: 'SP', description: 'UF de 2 letras (ex: SP, RJ, MG)' }),
+  state: z.string().length(2).optional().openapi({ example: 'SP', description: 'UF de 2 letras (ex: SP, RJ, MG). Não pode ser combinado com national=true.' }),
   month: z.string().regex(/^\d{4}-\d{2}$/).optional().openapi({ example: '2026-03', description: 'Mês de referência no formato AAAA-MM' }),
   is_desonerated: booleanQuerySchema.default(false).openapi({ example: false, description: 'Regime tributário: true = desonerado, false = não desonerado' }),
   compact: booleanQuerySchema.default(false).openapi({ example: false, description: 'Retorna payload reduzido para listagens de alta performance' }),
+  national: booleanQuerySchema.default(false).openapi({ example: false, description: 'Retorna o preço médio nacional (ROUND(AVG) entre todas as UFs) em vez de filtrar por state. Não pode ser combinado com state.' }),
 })
 
 export const ItemDetailQuerySchema = z.object({
-  state: z.string().length(2).optional().openapi({ example: 'SP', description: 'UF de 2 letras (ex: SP, RJ, MG)' }),
+  state: z.string().length(2).optional().openapi({ example: 'SP', description: 'UF de 2 letras (ex: SP, RJ, MG). Não pode ser combinado com national=true.' }),
   month: z.string().regex(/^\d{4}-\d{2}$/).optional().openapi({ example: '2026-03', description: 'Mês de referência no formato AAAA-MM' }),
   is_desonerated: booleanQuerySchema.default(false).openapi({ example: false, description: 'Regime tributário: true = desonerado, false = não desonerado' }),
+  national: booleanQuerySchema.default(false).openapi({ example: false, description: 'Retorna o preço médio nacional (ROUND(AVG) entre todas as UFs) em vez de filtrar por state. Não pode ser combinado com state.' }),
 })
 
 export const ItemBulkQuerySchema = z.object({

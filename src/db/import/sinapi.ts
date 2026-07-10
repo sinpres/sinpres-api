@@ -110,7 +110,7 @@ async function upsertItemCatalog(records: ItemCatalogJson[]): Promise<CatalogSta
   await chunked(records, 500, async (batch) => {
     await db
       .insert(itemCatalog)
-      .values(batch.map((r) => ({ code: r.code, description: r.description, unit: r.unit })))
+      .values(batch.map((r) => ({ code: r.code, description: r.description, unit: r.unit.trim().toUpperCase() })))
       .onConflictDoUpdate({
         target: itemCatalog.code,
         set: {
@@ -195,7 +195,7 @@ async function upsertCompositionCatalog(records: CompositionCatalogJson[]): Prom
   await chunked(records, 500, async (batch) => {
     await db
       .insert(compositionCatalog)
-      .values(batch.map((r) => ({ code: r.code, description: r.description, unit: r.unit })))
+      .values(batch.map((r) => ({ code: r.code, description: r.description, unit: r.unit.trim().toUpperCase() })))
       .onConflictDoUpdate({
         target: compositionCatalog.code,
         set: {
@@ -271,7 +271,7 @@ async function upsertCompositionItems(records: CompositionItemJson[]): Promise<n
           itemType: r.item_type,
           itemCode: r.item_code,
           description: r.description,
-          unit: r.unit,
+          unit: r.unit.trim().toUpperCase(),
           resourceType: null as string | null,
           coefficient: r.coefficient,
         }

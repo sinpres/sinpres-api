@@ -41,6 +41,40 @@ describe('Items', () => {
       expect(body.data.length).toBeGreaterThan(0)
     })
 
+    it('matches unaccented descriptions with an accented query', async () => {
+      const res = await app.request(`/api/v1/sectors/civil-construction/items?search=${encodeURIComponent('média')}`)
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      // "AREIA MEDIA" (code 4) has no accent; the accented query still matches via unaccent
+      expect(body.data.some((item: any) => item.code === 4)).toBe(true)
+    })
+
+    it('falls back to trigram similarity when full-text search misses a typo', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/items?search=pedreipo')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      // "pedreipo" is a one-letter typo of PEDREIRO (code 5); FTS misses, trigram recovers it
+      expect(body.data.length).toBeGreaterThan(0)
+      expect(body.data[0].code).toBe(5)
+    })
+
+    it('still falls back to trigram similarity for a typo when include_total=false', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/items?search=pedreipo&include_total=false')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.data.length).toBeGreaterThan(0)
+      expect(body.data[0].code).toBe(5)
+    })
+
+    it('returns an empty page (not trigram noise) when paging past the FTS match set with include_total=false', async () => {
+      // "cimento" FTS-matches only CIMENTO PORTLAND (code 3); page 2 is past the single match
+      const res = await app.request('/api/v1/sectors/civil-construction/items?search=cimento&page=2&limit=1&include_total=false')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.data).toEqual([])
+      expect(body.meta.hasNextPage).toBe(false)
+    })
+
     it('supports unit filter', async () => {
       const res = await app.request('/api/v1/sectors/civil-construction/items?unit=KG')
       expect(res.status).toBe(200)
@@ -79,6 +113,26 @@ describe('Items', () => {
       expect(body.data[0]).not.toHaveProperty('metadata')
       expect(body.data[0]).not.toHaveProperty('createdAt')
     })
+
+    it('computes the national average price across UFs, including a UF-only item', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/items?national=true&month=2026-04&limit=10')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      // "AREIA MEDIA" (code 4) only has a price in RJ; national=true still surfaces it
+      const areia = body.data.find((item: any) => item.code === 4)
+      expect(areia).toBeDefined()
+      expect(areia.stateCode).toBe('BR')
+      expect(areia.referenceMonth).toBe('2026-04')
+      expect(areia.isDesonerated).toBe(false)
+      expect(areia.unitPrice).toBe(4500)
+    })
+
+    it('rejects combining state and national', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/items?national=true&state=SP')
+      expect(res.status).toBe(400)
+      const body = await res.json()
+      expect(body).toEqual({ error: 'Use either state or national, not both' })
+    })
   })
 
   describe('GET /api/v1/sectors/:slug/items/:code', () => {
@@ -101,6 +155,23 @@ describe('Items', () => {
     it('returns 404 for unknown code', async () => {
       const res = await app.request('/api/v1/sectors/civil-construction/items/999999')
       expect(res.status).toBe(404)
+    })
+
+    it('returns the national average price for an item by code', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/items/1?national=true&month=2026-04')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.data.code).toBe(1)
+      expect(body.data.stateCode).toBe('BR')
+      expect(body.data.referenceMonth).toBe('2026-04')
+      expect(body.data.unitPrice).toBe(1234)
+    })
+
+    it('rejects combining state and national for item detail', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/items/1?national=true&state=SP')
+      expect(res.status).toBe(400)
+      const body = await res.json()
+      expect(body).toEqual({ error: 'Use either state or national, not both' })
     })
   })
 

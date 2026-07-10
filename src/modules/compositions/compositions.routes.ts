@@ -12,7 +12,7 @@ import {
 } from './compositions.schema'
 import { getCompositions, getCompositionByCode, getCompositionsBulk, getExpandedComposition } from './compositions.service'
 import { getSectorBySlug } from '../sectors/sectors.service'
-import { notFound } from '../../shared/errors'
+import { notFound, badRequest } from '../../shared/errors'
 import { paginationMeta } from '../../shared/pagination'
 import { optionalApiKeySecurity } from '../../shared/openapi'
 
@@ -36,6 +36,8 @@ const listRoute = createRoute({
 
 **Regime tributário:** Use o parâmetro \`is_desonerated\` para filtrar por desoneração. Default: \`false\`.
 
+**Custo médio nacional:** Use \`national=true\` para retornar o custo médio (arredondado) entre todas as UFs disponíveis, em vez de filtrar por uma UF específica. Não pode ser combinado com \`state\`.
+
 **Paginação:** Use \`page\` e \`limit\` para controlar a paginação. Máximo de 100 itens por página.
 
 **Performance:** Use \`include_total=false\` para evitar \`COUNT(*)\` e \`compact=true\` para retornar payload reduzido.`,
@@ -47,6 +49,10 @@ const listRoute = createRoute({
     200: {
       content: { 'application/json': { schema: CompositionsResponseSchema } },
       description: 'Lista paginada de composições com metadados de paginação',
+    },
+    400: {
+      content: { 'application/json': { schema: z.object({ error: z.string() }) } },
+      description: 'Combinação inválida de state e national',
     },
     404: {
       content: { 'application/json': { schema: z.object({ error: z.string() }) } },
@@ -61,7 +67,7 @@ const getRoute = createRoute({
   tags: ['Compositions'],
   security: optionalApiKeySecurity,
   summary: 'Detalhar composição por código',
-  description: 'Retorna os detalhes completos de uma composição (serviço SINAPI) pelo seu código de referência, incluindo todos os itens que a compõem (insumos e sub-composições) com coeficientes e preços.',
+  description: 'Retorna os detalhes completos de uma composição (serviço SINAPI) pelo seu código de referência, incluindo todos os itens que a compõem (insumos e sub-composições) com coeficientes e preços. Aceita `national=true` para o custo médio entre todas as UFs, inclusive nos itens filhos (não pode ser combinado com `state`).',
   request: {
     params: z.object({
       slug: z.string().openapi({ example: 'civil-construction' }),
@@ -73,6 +79,10 @@ const getRoute = createRoute({
     200: {
       content: { 'application/json': { schema: CompositionResponseSchema } },
       description: 'Detalhes da composição com itens',
+    },
+    400: {
+      content: { 'application/json': { schema: z.object({ error: z.string() }) } },
+      description: 'Combinação inválida de state e national',
     },
     404: {
       content: { 'application/json': { schema: z.object({ error: z.string() }) } },
@@ -144,6 +154,10 @@ compositionsApp.openapi(listRoute, async (c) => {
   const { slug } = c.req.valid('param')
   const query = c.req.valid('query')
 
+  if (query.national && query.state) {
+    return badRequest(c, 'Use either state or national, not both')
+  }
+
   const sector = await getSectorBySlug(slug)
   if (!sector) return notFound(c, 'Sector not found')
 
@@ -156,6 +170,10 @@ compositionsApp.openapi(listRoute, async (c) => {
 compositionsApp.openapi(getRoute, async (c) => {
   const { slug, code } = c.req.valid('param')
   const query = c.req.valid('query')
+
+  if (query.national && query.state) {
+    return badRequest(c, 'Use either state or national, not both')
+  }
 
   const sector = await getSectorBySlug(slug)
   if (!sector) return notFound(c, 'Sector not found')

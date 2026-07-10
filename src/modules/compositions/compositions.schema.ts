@@ -14,8 +14,8 @@ export const CompositionItemSchema = z.object({
   unit: z.string(),
   resourceType: z.enum(['MATERIAL', 'LABOR', 'EQUIPMENT']).nullable(),
   coefficient: z.string(),
-  unitPrice: z.number(),
-  totalPrice: z.number(),
+  unitPrice: z.number().describe('Preço em centavos (R$ × 100)'),
+  totalPrice: z.number().describe('Preço em centavos (R$ × 100)'),
 })
 
 export const CompositionSchema = z.object({
@@ -26,7 +26,7 @@ export const CompositionSchema = z.object({
   stateCode: z.string().length(2).nullable(),
   referenceMonth: z.string().length(7).nullable(),
   isDesonerated: z.boolean().nullable(),
-  baseUnitCost: z.number().nullable(),
+  baseUnitCost: z.number().nullable().describe('Preço em centavos (R$ × 100)'),
   sourceUpdatedAt: z.string().nullable(),
   previousCode: z.number().nullable().openapi({
     example: null,
@@ -44,7 +44,7 @@ export const CompositionCompactSchema = z.object({
   stateCode: z.string().length(2).nullable(),
   referenceMonth: z.string().length(7).nullable(),
   isDesonerated: z.boolean().nullable(),
-  baseUnitCost: z.number().nullable(),
+  baseUnitCost: z.number().nullable().describe('Preço em centavos (R$ × 100)'),
   previousCode: z.number().nullable(),
 })
 
@@ -55,16 +55,18 @@ export const CompositionDetailSchema = CompositionSchema.extend({
 export const CompositionsQuerySchema = paginationQuerySchema.extend({
   search: z.string().optional().openapi({ example: 'alvenaria', description: 'Termo de busca (full-text search em português)' }),
   unit: z.string().optional().openapi({ example: 'M2', description: 'Filtrar por unidade de medida' }),
-  state: z.string().length(2).optional().openapi({ example: 'SP', description: 'UF de 2 letras (ex: SP, RJ, MG)' }),
+  state: z.string().length(2).optional().openapi({ example: 'SP', description: 'UF de 2 letras (ex: SP, RJ, MG). Não pode ser combinado com national=true.' }),
   month: z.string().regex(/^\d{4}-\d{2}$/).optional().openapi({ example: '2026-03', description: 'Mês de referência no formato AAAA-MM' }),
   is_desonerated: booleanQuerySchema.default(false).openapi({ example: false, description: 'Regime tributário: true = desonerado, false = não desonerado' }),
   compact: booleanQuerySchema.default(false).openapi({ example: false, description: 'Retorna payload reduzido para listagens de alta performance' }),
+  national: booleanQuerySchema.default(false).openapi({ example: false, description: 'Retorna o custo médio nacional (ROUND(AVG) entre todas as UFs) em vez de filtrar por state. Não pode ser combinado com state.' }),
 })
 
 export const CompositionDetailQuerySchema = z.object({
-  state: z.string().length(2).optional().openapi({ example: 'SP', description: 'UF de 2 letras (ex: SP, RJ, MG)' }),
+  state: z.string().length(2).optional().openapi({ example: 'SP', description: 'UF de 2 letras (ex: SP, RJ, MG). Não pode ser combinado com national=true.' }),
   month: z.string().regex(/^\d{4}-\d{2}$/).optional().openapi({ example: '2026-03', description: 'Mês de referência no formato AAAA-MM' }),
   is_desonerated: booleanQuerySchema.default(false).openapi({ example: false, description: 'Regime tributário: true = desonerado, false = não desonerado' }),
+  national: booleanQuerySchema.default(false).openapi({ example: false, description: 'Retorna o custo médio nacional (ROUND(AVG) entre todas as UFs) em vez de filtrar por state. Não pode ser combinado com state.' }),
 })
 
 export const CompositionBulkQuerySchema = z.object({
@@ -92,7 +94,7 @@ export const ExpandedCompositionNodeSchema = z.object({
   depth: z.number(),
   coefficient: z.string().nullable(),
   item_type: z.enum(['COMPOSITION', 'INPUT', 'SUB_COMPOSITION']),
-  unit_price: z.number().nullable(),
+  unit_price: z.number().nullable().describe('Preço em centavos (R$ × 100)'),
   items: z.array(z.any()).openapi({ description: 'Nós filhos da composição expandida, com o mesmo formato do nó atual.' }),
   truncated: z.boolean(),
 })
