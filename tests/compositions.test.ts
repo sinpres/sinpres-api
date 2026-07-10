@@ -41,6 +41,58 @@ describe('Compositions', () => {
       expect(body.data.length).toBeGreaterThan(0)
     })
 
+    it('matches accented descriptions with an unaccented query', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/compositions?search=ceramico')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      // "CERÂMICO" descriptions are matched by the unaccented query "ceramico"
+      expect(body.data.map((c: any) => c.code)).toContain(1002)
+    })
+
+    it('orders search results by relevance rather than code', async () => {
+      const res = await app.request(`/api/v1/sectors/civil-construction/compositions?search=${encodeURIComponent('parede revestimento')}`)
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      // 1004 outranks the lower code 1003 → relevance, not code order, drives the result
+      expect(body.data.map((c: any) => c.code)).toEqual([1004, 1003])
+    })
+
+    it('falls back to trigram similarity when full-text search misses a typo', async () => {
+      const res = await app.request(`/api/v1/sectors/civil-construction/compositions?search=${encodeURIComponent('revestimemto ceramico')}`)
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      // one-letter typo of "revestimento cerâmico"; trigram recovers 1002 (closest) first
+      expect(body.data.length).toBeGreaterThan(0)
+      expect(body.data[0].code).toBe(1002)
+    })
+
+    it('still falls back to trigram similarity for a typo when include_total=false', async () => {
+      const res = await app.request(`/api/v1/sectors/civil-construction/compositions?search=${encodeURIComponent('revestimemto ceramico')}&include_total=false`)
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.data.length).toBeGreaterThan(0)
+      expect(body.data[0].code).toBe(1002)
+    })
+
+    it('returns the sole FTS match on page 1 for a query where trigram would otherwise match more rows', async () => {
+      // "parede ceramico revestida" FTS-matches only 1003, but trigram (>0.25) also
+      // matches 1002 and 1004 — this is the fixture that exposes the pagination bug below.
+      const res = await app.request(`/api/v1/sectors/civil-construction/compositions?search=${encodeURIComponent('parede ceramico revestida')}&page=1&limit=1&include_total=false`)
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.data.map((c: any) => c.code)).toEqual([1003])
+    })
+
+    it('returns an empty page (not trigram noise) when paging past the FTS match set with include_total=false', async () => {
+      // Same query as above, one page further: only 1 real FTS match exists, so page 2
+      // must come back empty instead of leaking a trigram-only row (1002 or 1004).
+      const res = await app.request(`/api/v1/sectors/civil-construction/compositions?search=${encodeURIComponent('parede ceramico revestida')}&page=2&limit=1&include_total=false`)
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.data).toEqual([])
+      expect(body.meta.hasNextPage).toBe(false)
+    })
+
     it('supports unit filter', async () => {
       const res = await app.request('/api/v1/sectors/civil-construction/compositions?unit=M2&state=SP&month=2026-04')
       expect(res.status).toBe(200)
@@ -77,6 +129,16 @@ describe('Compositions', () => {
       expect(body.data[0]).not.toHaveProperty('sourceUpdatedAt')
       expect(body.data[0]).not.toHaveProperty('createdAt')
       expect(body.data[0]).not.toHaveProperty('items')
+    })
+
+    it('computes the national average cost across UFs', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/compositions?national=true&month=2026-04&limit=10')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      const alvenaria = body.data.find((c: any) => c.code === 1001)
+      expect(alvenaria).toBeDefined()
+      expect(alvenaria.stateCode).toBe('BR')
+      expect(alvenaria.baseUnitCost).toBe(15000)
     })
   })
 
@@ -116,6 +178,36 @@ describe('Compositions', () => {
     it('returns 404 for unknown code', async () => {
       const res = await app.request('/api/v1/sectors/civil-construction/compositions/999999')
       expect(res.status).toBe(404)
+    })
+
+    it('returns the national average cost for a composition, including per-child averages', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/compositions/1001?national=true&month=2026-04')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.data.code).toBe(1001)
+      expect(body.data.stateCode).toBe('BR')
+      expect(body.data.referenceMonth).toBe('2026-04')
+      expect(body.data.baseUnitCost).toBe(15000)
+      const cimento = body.data.items.find((i: any) => i.code === 3)
+      expect(cimento.unitPrice).toBe(900)
+      expect(cimento.totalPrice).toBe(225)
+    })
+
+    it('averages a sub-composition child at the national coordinate too', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/compositions/1003?national=true&month=2026-04')
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      const subComposition = body.data.items.find((i: any) => i.itemType === 'SUB_COMPOSITION')
+      expect(subComposition.code).toBe(1002)
+      // 1002's own national baseUnitCost (SP-only price 8500) is used for the child row
+      expect(subComposition.unitPrice).toBe(8500)
+    })
+
+    it('rejects combining state and national for composition detail', async () => {
+      const res = await app.request('/api/v1/sectors/civil-construction/compositions/1001?national=true&state=SP')
+      expect(res.status).toBe(400)
+      const body = await res.json()
+      expect(body).toEqual({ error: 'Use either state or national, not both' })
     })
   })
 

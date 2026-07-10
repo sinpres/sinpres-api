@@ -1,6 +1,6 @@
 import { db } from '../../db/client'
 import { civilConstructionItemCatalog, civilConstructionItemPrices } from '../../db/schema'
-import { eq, sql, and, count, desc, asc } from 'drizzle-orm'
+import { eq, sql, and, count, desc, asc, type SQL } from 'drizzle-orm'
 import type { PaginationQuery } from '../../shared/pagination'
 import { remember } from '../../shared/memory-cache'
 
@@ -13,6 +13,7 @@ interface ItemsFilter extends PaginationQuery {
   month?: string
   is_desonerated?: boolean
   compact?: boolean
+  national?: boolean
 }
 
 interface ItemBulkQuery {
@@ -46,167 +47,371 @@ export async function getLatestReferenceMonth(state?: string): Promise<string | 
 
 export async function getItems(schemaName: string, filter: ItemsFilter) {
   if (schemaName !== 'civil_construction') {
-    return { items: [], total: 0 }
+    return { items: [], total: 0, hasNextPage: false }
   }
 
   const catalog = civilConstructionItemCatalog
-  const conditions = []
-
-  if (filter.unit) {
-    conditions.push(eq(catalog.unit, filter.unit.toUpperCase()))
-  }
-
-  if (filter.search) {
-    conditions.push(
-      sql`to_tsvector('portuguese', ${catalog.description} || ' ' || coalesce(${catalog.generalInfo}, '')) @@ plainto_tsquery('portuguese', ${filter.search})`
-    )
-  }
-
-  const where = conditions.length > 0 ? and(...conditions) : undefined
   const offset = (filter.page - 1) * filter.limit
   const includeTotal = filter.include_total !== false
   const queryLimit = includeTotal ? filter.limit : filter.limit + 1
+  const searchVector = sql`to_tsvector('portuguese_unaccent', ${catalog.description} || ' ' || coalesce(${catalog.generalInfo}, ''))`
 
-  if (!filter.state) {
-    const catalogQuery = db.select()
-      .from(catalog)
-      .where(where)
+  async function runListing(searchCondition: SQL | undefined, searchOrder: SQL | undefined): Promise<{ items: any[]; total: number | null; hasNextPage: boolean }> {
+    const conditions = []
+
+    if (filter.unit) {
+      conditions.push(eq(catalog.unit, filter.unit.toUpperCase()))
+    }
+
+    if (searchCondition) {
+      conditions.push(searchCondition)
+    }
+
+    const where = conditions.length > 0 ? and(...conditions) : undefined
+
+    if (filter.national) {
+      const prices = civilConstructionItemPrices
+      const isDesonerated = filter.is_desonerated ?? false
+      const month = filter.month ?? (await getLatestReferenceMonth()) ?? undefined
+
+      const avgConditions = [eq(prices.isDesonerated, isDesonerated)]
+      if (month) avgConditions.push(eq(prices.referenceMonth, month))
+
+      const avgPrices = db
+        .select({
+          catalogId: prices.catalogId,
+          unitPrice: sql<number>`round(avg(${prices.unitPrice}))::int`.as('unit_price'),
+        })
+        .from(prices)
+        .where(and(...avgConditions))
+        .groupBy(prices.catalogId)
+        .as('avg_prices')
+
+      const compactSelection = {
+        id: catalog.id,
+        categoryId: catalog.categoryId,
+        code: catalog.code,
+        description: catalog.description,
+        unit: catalog.unit,
+        unitPrice: avgPrices.unitPrice,
+        previousCode: catalog.previousCode,
+      }
+
+      const fullSelection = {
+        ...compactSelection,
+        technicalStandards: catalog.technicalStandards,
+        generalInfo: catalog.generalInfo,
+        imageUrl: catalog.imageUrl,
+        metadata: catalog.metadata,
+        sourceUpdatedAt: catalog.sourceUpdatedAt,
+        createdAt: catalog.createdAt,
+      }
+      const selection = filter.compact ? compactSelection : fullSelection
+
+      const withNational = <T extends Record<string, unknown>>(row: T) => ({
+        ...row,
+        stateCode: 'BR' as const,
+        referenceMonth: month ?? null,
+        isDesonerated,
+      })
+
+      const nationalQuery = db.select(selection)
+        .from(avgPrices)
+        .innerJoin(catalog, eq(avgPrices.catalogId, catalog.id))
+        .where(where)
+        .limit(queryLimit)
+        .offset(offset)
+        .orderBy(...(searchOrder ? [searchOrder, asc(catalog.code)] : [asc(catalog.code)]))
+
+      if (!includeTotal) {
+        const rows = await nationalQuery
+        const hasNextPage = rows.length > filter.limit
+        return {
+          items: rows.slice(0, filter.limit).map(withNational),
+          total: null as number | null,
+          hasNextPage,
+        }
+      }
+
+      const [rows, totalResult] = await Promise.all([
+        nationalQuery,
+        db.select({ total: count() })
+          .from(avgPrices)
+          .innerJoin(catalog, eq(avgPrices.catalogId, catalog.id))
+          .where(where),
+      ])
+
+      return {
+        items: rows.map(withNational),
+        total: totalResult[0].total as number | null,
+        hasNextPage: filter.page * filter.limit < totalResult[0].total,
+      }
+    }
+
+    if (!filter.state) {
+      const catalogQuery = db.select()
+        .from(catalog)
+        .where(where)
+        .limit(queryLimit)
+        .offset(offset)
+        .orderBy(...(searchOrder ? [searchOrder, asc(catalog.code)] : [asc(catalog.code)]))
+
+      const mapCatalogItem = (row: typeof catalog.$inferSelect) => {
+        const compactItem = {
+          id: row.id,
+          categoryId: row.categoryId,
+          code: row.code,
+          description: row.description,
+          unit: row.unit,
+          stateCode: null,
+          referenceMonth: null,
+          isDesonerated: null,
+          unitPrice: null,
+          previousCode: row.previousCode,
+        }
+
+        if (filter.compact) return compactItem
+
+        return {
+          ...compactItem,
+          technicalStandards: row.technicalStandards,
+          generalInfo: row.generalInfo,
+          imageUrl: row.imageUrl,
+          metadata: row.metadata,
+          sourceUpdatedAt: row.sourceUpdatedAt,
+          createdAt: row.createdAt,
+        }
+      }
+
+      if (!includeTotal) {
+        const rows = await catalogQuery
+        const hasNextPage = rows.length > filter.limit
+        return {
+          items: rows.slice(0, filter.limit).map(mapCatalogItem),
+          total: null as number | null,
+          hasNextPage,
+        }
+      }
+
+      const [rows, totalResult] = await Promise.all([
+        catalogQuery,
+        db.select({ total: count() }).from(catalog).where(where),
+      ])
+
+      return {
+        items: rows.map(mapCatalogItem),
+        total: totalResult[0].total as number | null,
+        hasNextPage: filter.page * filter.limit < totalResult[0].total,
+      }
+    }
+
+    const prices = civilConstructionItemPrices
+    const priceConditions = [
+      ...conditions,
+      eq(prices.stateCode, filter.state.toUpperCase()),
+    ]
+
+    const month = filter.month ?? (await getLatestReferenceMonth(filter.state)) ?? undefined
+    if (month) {
+      priceConditions.push(eq(prices.referenceMonth, month))
+    }
+
+    priceConditions.push(eq(prices.isDesonerated, filter.is_desonerated ?? false))
+
+    const priceWhere = and(...priceConditions)
+
+    const compactSelection = {
+      id: catalog.id,
+      categoryId: catalog.categoryId,
+      code: catalog.code,
+      description: catalog.description,
+      unit: catalog.unit,
+      stateCode: prices.stateCode,
+      referenceMonth: prices.referenceMonth,
+      isDesonerated: prices.isDesonerated,
+      unitPrice: prices.unitPrice,
+      previousCode: catalog.previousCode,
+    }
+
+    const fullSelection = {
+      id: catalog.id,
+      categoryId: catalog.categoryId,
+      code: catalog.code,
+      description: catalog.description,
+      unit: catalog.unit,
+      stateCode: prices.stateCode,
+      referenceMonth: prices.referenceMonth,
+      isDesonerated: prices.isDesonerated,
+      unitPrice: prices.unitPrice,
+      technicalStandards: catalog.technicalStandards,
+      generalInfo: catalog.generalInfo,
+      imageUrl: catalog.imageUrl,
+      metadata: catalog.metadata,
+      sourceUpdatedAt: catalog.sourceUpdatedAt,
+      previousCode: catalog.previousCode,
+      createdAt: catalog.createdAt,
+    }
+    const selection = filter.compact ? compactSelection : fullSelection
+
+    const itemsQuery = db.select(selection)
+      .from(prices)
+      .innerJoin(catalog, eq(prices.catalogId, catalog.id))
+      .where(priceWhere)
       .limit(queryLimit)
       .offset(offset)
-      .orderBy(asc(catalog.code))
-
-    const mapCatalogItem = (row: typeof catalog.$inferSelect) => {
-      const compactItem = {
-        id: row.id,
-        categoryId: row.categoryId,
-        code: row.code,
-        description: row.description,
-        unit: row.unit,
-        stateCode: null,
-        referenceMonth: null,
-        isDesonerated: null,
-        unitPrice: null,
-        previousCode: row.previousCode,
-      }
-
-      if (filter.compact) return compactItem
-
-      return {
-        ...compactItem,
-        technicalStandards: row.technicalStandards,
-        generalInfo: row.generalInfo,
-        imageUrl: row.imageUrl,
-        metadata: row.metadata,
-        sourceUpdatedAt: row.sourceUpdatedAt,
-        createdAt: row.createdAt,
-      }
-    }
+      .orderBy(...(searchOrder ? [searchOrder, asc(catalog.code), asc(prices.stateCode)] : [asc(catalog.code), asc(prices.stateCode)]))
 
     if (!includeTotal) {
-      const rows = await catalogQuery
+      const rows = await itemsQuery
       const hasNextPage = rows.length > filter.limit
-      return {
-        items: rows.slice(0, filter.limit).map(mapCatalogItem),
-        total: null,
-        hasNextPage,
-      }
+      return { items: rows.slice(0, filter.limit), total: null as number | null, hasNextPage }
     }
 
-    const [rows, totalResult] = await Promise.all([
-      catalogQuery,
-      db.select({ total: count() }).from(catalog).where(where),
+    const [items, totalResult] = await Promise.all([
+      itemsQuery,
+      db.select({ total: count() })
+        .from(prices)
+        .innerJoin(catalog, eq(prices.catalogId, catalog.id))
+        .where(priceWhere),
     ])
 
     return {
-      items: rows.map(mapCatalogItem),
-      total: totalResult[0].total,
+      items,
+      total: totalResult[0].total as number | null,
       hasNextPage: filter.page * filter.limit < totalResult[0].total,
     }
   }
 
-  const prices = civilConstructionItemPrices
-  const priceConditions = [
-    ...conditions,
-    eq(prices.stateCode, filter.state.toUpperCase()),
-  ]
+  // Cheap existence check for a search condition, ignoring offset/limit/order. Mirrors
+  // runListing's branch dispatch (national / catalog-only / state) so it matches the
+  // exact same row set the listing query would draw from.
+  // ponytail: duplicates runListing's per-branch where-building instead of refactoring
+  // runListing to expose it, to keep this a zero-risk addition to the existing 3 branches.
+  // If those branches' filters change, mirror the change here too.
+  async function probeMatch(searchCondition: SQL): Promise<boolean> {
+    const conditions: SQL[] = [searchCondition]
+    if (filter.unit) {
+      conditions.push(eq(catalog.unit, filter.unit.toUpperCase()))
+    }
+    const where = and(...conditions)
 
-  const month = filter.month ?? (await getLatestReferenceMonth(filter.state)) ?? undefined
-  if (month) {
-    priceConditions.push(eq(prices.referenceMonth, month))
-  }
+    if (filter.national) {
+      const prices = civilConstructionItemPrices
+      const isDesonerated = filter.is_desonerated ?? false
+      const month = filter.month ?? (await getLatestReferenceMonth()) ?? undefined
 
-  priceConditions.push(eq(prices.isDesonerated, filter.is_desonerated ?? false))
+      const avgConditions = [eq(prices.isDesonerated, isDesonerated)]
+      if (month) avgConditions.push(eq(prices.referenceMonth, month))
 
-  const priceWhere = and(...priceConditions)
+      const avgPrices = db
+        .select({ catalogId: prices.catalogId })
+        .from(prices)
+        .where(and(...avgConditions))
+        .groupBy(prices.catalogId)
+        .as('avg_prices')
 
-  const compactSelection = {
-    id: catalog.id,
-    categoryId: catalog.categoryId,
-    code: catalog.code,
-    description: catalog.description,
-    unit: catalog.unit,
-    stateCode: prices.stateCode,
-    referenceMonth: prices.referenceMonth,
-    isDesonerated: prices.isDesonerated,
-    unitPrice: prices.unitPrice,
-    previousCode: catalog.previousCode,
-  }
+      const rows = await db.select({ id: catalog.id })
+        .from(avgPrices)
+        .innerJoin(catalog, eq(avgPrices.catalogId, catalog.id))
+        .where(where)
+        .limit(1)
+      return rows.length > 0
+    }
 
-  const fullSelection = {
-    id: catalog.id,
-    categoryId: catalog.categoryId,
-    code: catalog.code,
-    description: catalog.description,
-    unit: catalog.unit,
-    stateCode: prices.stateCode,
-    referenceMonth: prices.referenceMonth,
-    isDesonerated: prices.isDesonerated,
-    unitPrice: prices.unitPrice,
-    technicalStandards: catalog.technicalStandards,
-    generalInfo: catalog.generalInfo,
-    imageUrl: catalog.imageUrl,
-    metadata: catalog.metadata,
-    sourceUpdatedAt: catalog.sourceUpdatedAt,
-    previousCode: catalog.previousCode,
-    createdAt: catalog.createdAt,
-  }
-  const selection = filter.compact ? compactSelection : fullSelection
+    if (!filter.state) {
+      const rows = await db.select({ id: catalog.id }).from(catalog).where(where).limit(1)
+      return rows.length > 0
+    }
 
-  const itemsQuery = db.select(selection)
-    .from(prices)
-    .innerJoin(catalog, eq(prices.catalogId, catalog.id))
-    .where(priceWhere)
-    .limit(queryLimit)
-    .offset(offset)
-    .orderBy(asc(catalog.code), asc(prices.stateCode))
+    const prices = civilConstructionItemPrices
+    const priceConditions = [
+      ...conditions,
+      eq(prices.stateCode, filter.state.toUpperCase()),
+    ]
 
-  if (!includeTotal) {
-    const rows = await itemsQuery
-    const hasNextPage = rows.length > filter.limit
-    return { items: rows.slice(0, filter.limit), total: null, hasNextPage }
-  }
+    const month = filter.month ?? (await getLatestReferenceMonth(filter.state)) ?? undefined
+    if (month) {
+      priceConditions.push(eq(prices.referenceMonth, month))
+    }
+    priceConditions.push(eq(prices.isDesonerated, filter.is_desonerated ?? false))
 
-  const [items, totalResult] = await Promise.all([
-    itemsQuery,
-    db.select({ total: count() })
+    const rows = await db.select({ id: catalog.id })
       .from(prices)
       .innerJoin(catalog, eq(prices.catalogId, catalog.id))
-      .where(priceWhere),
-  ])
-
-  return {
-    items,
-    total: totalResult[0].total,
-    hasNextPage: filter.page * filter.limit < totalResult[0].total,
+      .where(and(...priceConditions))
+      .limit(1)
+    return rows.length > 0
   }
+
+  if (filter.search) {
+    const ftsCondition = sql`${searchVector} @@ plainto_tsquery('portuguese_unaccent', ${filter.search})`
+    const ftsOrder = sql`ts_rank(${searchVector}, plainto_tsquery('portuguese_unaccent', ${filter.search})) DESC`
+    const result = await runListing(ftsCondition, ftsOrder)
+    const empty = includeTotal ? result.total === 0 : result.items.length === 0
+    if (!empty) return result
+
+    // Without a total count, an empty page can mean either "zero FTS matches" or
+    // "this offset is past the end of the FTS match set" — probe for any FTS match
+    // (same condition, no offset/limit) before deciding the search truly missed.
+    if (!includeTotal && (await probeMatch(ftsCondition))) {
+      return result
+    }
+
+    // FTS miss (typo/variant) → trigram similarity fallback on description
+    const trigramCondition = sql`similarity(${catalog.description}, ${filter.search}) > 0.25`
+    const trigramOrder = sql`similarity(${catalog.description}, ${filter.search}) DESC`
+    return runListing(trigramCondition, trigramOrder)
+  }
+
+  return runListing(undefined, undefined)
 }
 
-export async function getItemByCode(schemaName: string, code: number, filter: { state?: string; month?: string; is_desonerated?: boolean }) {
+export async function getItemByCode(schemaName: string, code: number, filter: { state?: string; month?: string; is_desonerated?: boolean; national?: boolean }) {
   if (schemaName !== 'civil_construction') {
     return null
   }
 
   const catalog = civilConstructionItemCatalog
+
+  if (filter.national) {
+    const item = (await db.select().from(catalog).where(eq(catalog.code, code)).limit(1))[0]
+    if (!item) return null
+
+    const prices = civilConstructionItemPrices
+    const isDesonerated = filter.is_desonerated ?? false
+    const month = filter.month ?? (await getLatestReferenceMonth()) ?? undefined
+
+    const avgConditions = [eq(prices.catalogId, item.id), eq(prices.isDesonerated, isDesonerated)]
+    if (month) avgConditions.push(eq(prices.referenceMonth, month))
+
+    const avgResult = await db
+      .select({ unitPrice: sql<number | null>`round(avg(${prices.unitPrice}))::int` })
+      .from(prices)
+      .where(and(...avgConditions))
+
+    const unitPrice = avgResult[0]?.unitPrice ?? null
+    if (unitPrice === null) return null // no price for this code in any UF at this coordinate
+
+    return {
+      id: item.id,
+      categoryId: item.categoryId,
+      code: item.code,
+      description: item.description,
+      unit: item.unit,
+      stateCode: 'BR',
+      referenceMonth: month ?? null,
+      isDesonerated,
+      unitPrice,
+      technicalStandards: item.technicalStandards,
+      generalInfo: item.generalInfo,
+      imageUrl: item.imageUrl,
+      metadata: item.metadata,
+      sourceUpdatedAt: item.sourceUpdatedAt,
+      previousCode: item.previousCode,
+      createdAt: item.createdAt,
+    }
+  }
+
   if (!filter.state) {
     const result = await db.select().from(catalog).where(eq(catalog.code, code)).limit(1)
     const item = result[0]

@@ -4,6 +4,7 @@ import { sectorsApp } from './modules/sectors/sectors.routes'
 import { categoriesApp } from './modules/categories/categories.routes'
 import { itemsApp } from './modules/items/items.routes'
 import { compositionsApp } from './modules/compositions/compositions.routes'
+import { unitsApp } from './modules/units/units.routes'
 import { sinapiApp } from './modules/sinapi/sinapi.routes'
 import { adminApp } from './modules/admin/admin.routes'
 import { cors } from 'hono/cors'
@@ -24,6 +25,7 @@ app.route('/', sectorsApp)
 app.route('/', categoriesApp)
 app.route('/', itemsApp)
 app.route('/', compositionsApp)
+app.route('/', unitsApp)
 app.route('/', sinapiApp)
 app.route('/', adminApp)
 
@@ -108,9 +110,15 @@ Chave inválida ou revogada retorna **401** e continua limitada pelo IP (não ca
 
 Cada request consome unidades da cota conforme o custo: \`/bulk\` = 10, \`/expanded\` = 5, demais = 1. Os headers \`X-RateLimit-*\` refletem o consumo e \`Retry-After\` acompanha as respostas 429.
 
+## Preços em centavos
+
+Todos os campos de preço (\`unitPrice\`, \`baseUnitCost\`, \`totalPrice\`) são **INTEGER em centavos** (R$ × 100). Ex: \`unitPrice: 1234\` representa R$ 12,34.
+
 ## Unidades de medida disponíveis (Construção Civil)
 
 \`KG\`, \`M\`, \`M2\`, \`M3\`, \`UN\`, \`L\`, \`CJ\`, \`JG\`, \`PAR\`, \`H\`, \`DIA\`, \`MES\`, \`T\`, \`MIL\`, \`CENTO\`, \`SC25KG\`, \`KWH\`, \`100M\`, \`310ML\`, \`MXMES\`, \`M2XMES\`, \`M/MES\`, \`UNXMES\`
+
+A lista canônica de unidades por setor está disponível em \`GET /api/v1/sectors/{slug}/units\`.
 
 ## Substituição de códigos (\`previousCode\`)
 
@@ -150,6 +158,10 @@ Use este campo para **detectar se o código que você está consultando é um su
     {
       name: 'Categories',
       description: 'Categorias de itens dentro de um setor. Permite organizar os itens por tipo (ex: materiais hidráulicos, elétricos, estruturais, etc.).',
+    },
+    {
+      name: 'Units',
+      description: 'Unidades de medida usadas pelos insumos e composições de um setor. Fonte canônica para validação de filtros `unit` em outros endpoints.',
     },
     {
       name: 'Items',

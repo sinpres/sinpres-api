@@ -43,6 +43,13 @@
       "when": 1783538665072,
       "tag": "0005_green_scalphunter",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783640735313,
+      "tag": "0006_tiny_firelord",
+      "breakpoints": true
     }
   ]
 }

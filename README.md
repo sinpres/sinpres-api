@@ -8,19 +8,17 @@
 https://api.sinpres.com.br
 ```
 
-Não requer autenticação. Todos os endpoints são públicos.
+Leitura pública, sem autenticação obrigatória. O header `X-Api-Key` é opcional e destinado a produtos internos: além de um teto de cota próprio, permite separar o rate-limit por usuário final via `X-End-User-Id`. Rotas `/admin/*` exigem `Authorization: Bearer <ADMIN_API_SECRET>` e são de uso interno (gestão de chaves de integração).
 
 ## Rate-limit
 
-Os endpoints públicos em `/api/v1/*` têm rate-limit anônimo de `100 req/min` com sliding window. `/health` e `/doc` ficam fora do rate-limit.
+Os endpoints públicos em `/api/v1/*` têm rate-limit anônimo de `100 req/min` por IP, com sliding window. `/health` e `/doc` ficam fora do rate-limit.
 
-A identificação do bucket combina o IP da conexão com o primeiro IP do header `X-Forwarded-For`:
+O IP do cliente é resolvido nesta ordem: header `x-vercel-forwarded-for` (setado pela Vercel, não spoofável pelo cliente), depois `x-real-ip`, depois o IP do runtime.
 
-```txt
-<connectionIp>|<leftmost X-Forwarded-For>
-```
+Com um `X-Api-Key` válido, o limite deixa de ser por IP e passa a ser por cliente de integração: um bucket por `client + X-End-User-Id` (sem o header, o produto inteiro divide um único bucket) e, opcionalmente, um teto global por cliente independente do usuário final. Chave inválida ou revogada continua limitada pelo IP (não cai para o tier anônimo) e retorna `401`; falta de escopo retorna `403`.
 
-O `connectionIp` é resolvido por `cf-connecting-ip`, depois `x-real-ip`, depois o IP do runtime. Quando `X-Forwarded-For` não existe, o segundo componente vira `-`. Essa combinação mantém buckets úteis para consumers em serverless com IPs rotativos e evita que spoofing de `X-Forwarded-For` consuma a cota de outro cliente sem compartilhar o mesmo IP de conexão.
+Cada request consome unidades da cota conforme o custo do endpoint: `/bulk` = 10, `/expanded` = 5, demais = 1.
 
 Toda resposta em `/api/v1/*` expõe os headers:
 
@@ -332,6 +330,10 @@ curl "https://api.sinpres.com.br/api/v1/sinapi/states"
 curl "https://api.sinpres.com.br/api/v1/sinapi/reference-months?state=SP"
 ```
 
+## Preços em centavos
+
+Todos os campos de preço (`unitPrice`, `baseUnitCost`, `totalPrice`) são valores **INTEGER em centavos** (R$ × 100). Ex: `"unitPrice": 1234` representa R$ 12,34.
+
 ## Unidades de medida disponíveis
 
 | Sigla | Descrição |
@@ -353,6 +355,14 @@ curl "https://api.sinpres.com.br/api/v1/sinapi/reference-months?state=SP"
 | `CENTO` | Cento |
 | `SC25KG` | Saco de 25 kg |
 | `KWH` | Quilowatt-hora |
+| `100M` | Cada 100 metros |
+| `310ML` | Frasco/tubo de 310 ml (ex: silicone, cola) |
+| `MXMES` | Metro por mês (locação) |
+| `M2XMES` | Metro quadrado por mês (locação) |
+| `M/MES` | Metro por mês (locação, variante de formatação da fonte) |
+| `UNXMES` | Unidade por mês (locação) |
+
+Esta tabela é uma referência estática; a lista canônica e sempre atualizada por setor está em `GET /api/v1/sectors/{slug}/units` (união das unidades usadas em insumos e composições).
 
 ## Performance
 
@@ -400,6 +410,7 @@ A SINPRES API **não parseia XLSX nem PDF e não chama o extractor**. Ela é ind
 | `reference/` (5 JSONs + metadata) | `src/db/import/sinapi.ts` | `item_catalog`, `item_prices`, `composition_catalog`, `composition_prices`, `composition_items` |
 | `items.json` | `src/db/import/enrich-from-extractor.ts` | Enriquece `item_catalog` com normas, info geral, imagens, data da ficha |
 | `maintenances.json` | `src/db/import/maintenances.ts` | Preenche `previous_code` quando há substituição explícita |
+| `images/` | `src/db/import/upload-images-to-blob.ts` | Sobe as imagens para o Vercel Blob e atualiza `item_catalog.image_url` |
 
 A pasta `input/` é gitignored (exceto `.gitkeep` e `README.md`). Detalhes em [`input/README.md`](./input/README.md).
 
@@ -418,6 +429,9 @@ cp    ../sinapi-extractor/output/items.json         ./input/items.json
 
 # 3. Popular o banco
 bun run db:seed
+
+# 4. Subir as imagens dos insumos para o Vercel Blob (requer BLOB_READ_WRITE_TOKEN)
+bun run images:upload
 ```
 
 A API não conhece o extractor — você poderia gerar os JSONs em qualquer máquina, baixá-los, soltar em `input/` e rodar `bun run db:seed`.
